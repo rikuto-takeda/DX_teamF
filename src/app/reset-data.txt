@@ -1,0 +1,11 @@
+クーポン使用履歴のリセット手順
+
+ブラウザのコンソールを開いて、以下のコマンドを実行してください：
+
+localStorage.removeItem('usageRecords');
+location.reload();
+
+または、すべてのLocalStorageデータをクリアする場合：
+
+localStorage.clear();
+location.reload();

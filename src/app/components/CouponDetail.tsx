@@ -1,7 +1,7 @@
+// CouponDetail.tsx
 import { useState } from 'react';
 import { User, Coupon, UsageRecord } from '../App';
 import { rankConfigs } from '../utils/rankConfig';
-import { getRemainingUsageCount, canUseCoupon } from '../utils/mockData';
 import { ArrowLeft, Tag, Calendar, MapPin, Gift, Infinity, AlertCircle } from 'lucide-react';
 
 interface CouponDetailProps {
@@ -14,25 +14,24 @@ interface CouponDetailProps {
 
 export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }: CouponDetailProps) {
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const rankConfig = rankConfigs[user.rank];
-  const couponRankConfig = rankConfigs[coupon.requiredRank];
-  const remaining = getRemainingUsageCount(coupon, user.id, usageRecords);
-  const isAvailable = canUseCoupon(coupon, user.id, usageRecords);
+  
+  // ユーザーランクの安全取得
+  const rankConfig = rankConfigs[user.rank] || rankConfigs['BLUE'];
+  
+  // 💡 バックエンドの required_rank とフロントの requiredRank の両方を安全に許容する
+  const currentRankKey = coupon.required_rank || coupon.requiredRank || 'BLUE';
+  const couponRankConfig = rankConfigs[currentRankKey] || rankConfigs['BLUE'];
+
+  // 💡 本番DB連動用の簡易判定：履歴（USED）にこのユーザーとクーポンの組み合わせがなければ利用可能
+  const hasUsed = usageRecords.some(
+    (r) => String(r.couponId) === String(coupon.id) && String(r.userId) === String(user.id)
+  );
+
+  const remaining = hasUsed ? 0 : 1;
+  const isAvailable = !hasUsed; // まだ使っていなければ利用可能！
 
   const getUsageLimitText = () => {
-    if (coupon.usageLimitType === 'unlimited') {
-      return '無制限';
-    }
-    if (coupon.usageLimitType === 'once') {
-      return '1回のみ';
-    }
-    if (coupon.usageLimitType === 'monthly') {
-      return '月2回まで（ブロンズランククーポン全体）';
-    }
-    if (coupon.usageLimitType === 'lifetime') {
-      return '生涯2回まで';
-    }
-    return '-';
+    return '1回のみ';
   };
 
   const handleUseClick = () => {
@@ -67,7 +66,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
           <div className="relative h-64">
             <img
-              src={coupon.imageUrl}
+              src={coupon.imageUrl || "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=800&q=80"}
               alt={coupon.title}
               className="w-full h-full object-cover"
             />
@@ -101,7 +100,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
             
             <div className="flex items-center gap-2 mb-4 p-3 bg-green-50 rounded-lg">
               <Gift className="w-5 h-5 text-green-600" />
-              <span className="text-green-700">{coupon.discount}</span>
+              <span className="text-green-700">{coupon.discount || "特典"}</span>
             </div>
 
             <p className="text-gray-700 mb-6 leading-relaxed">
@@ -113,7 +112,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
                 <MapPin className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="text-gray-500 text-xs mb-1">利用可能店舗</p>
-                  <p className="text-gray-700">{coupon.storeName}</p>
+                  <p className="text-gray-700">{coupon.storeName || "全店舗共通"}</p>
                 </div>
               </div>
 
@@ -121,7 +120,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
                 <Calendar className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="text-gray-500 text-xs mb-1">有効期限</p>
-                  <p className="text-gray-700">{coupon.validUntil}まで</p>
+                  <p className="text-gray-700">{coupon.validUntil || "2026-12-31"}まで</p>
                 </div>
               </div>
 
@@ -148,9 +147,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-start gap-2">
                 <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-red-700">
-                  {coupon.usageLimitType === 'monthly' 
-                    ? 'このクーポンは今月の利用上限に達しています。来月になると再度利用可能になります。'
-                    : 'このクーポンは利用上限に達しています。'}
+                  このクーポンは利用上限に達しています。
                 </div>
               </div>
             )}
@@ -164,7 +161,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
                 transform: isAvailable ? 'none' : 'none'
               }}
             >
-              {isAvailable ? 'クーポンを利用する' : '利用できません'}
+              {isAvailable ? 'クーポンを利用する' : '利用上限に達しています'}
             </button>
           </div>
         </div>

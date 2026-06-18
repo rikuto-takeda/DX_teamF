@@ -1,3 +1,4 @@
+// App.tsx
 import { useState, useEffect } from 'react';
 import { LoginPage } from './components/LoginPage';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
@@ -14,23 +15,23 @@ import { PointsGuide } from './components/PointsGuide';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { WelcomeBonusDialog } from './components/WelcomeBonusDialog';
 import { Toaster } from './components/ui/sonner';
-import { mockUsageRecords } from './utils/mockData';
+import { toast } from 'sonner';
 
 export type Rank = 'BLUE' | 'BRONZE' | 'SILVER' | 'GOLD';
 
 export interface PointsBreakdown {
-  appLogin: number; // アプリログイン（月1回で5pt）
-  utilities: number; // 公共料金・クレカ決済（10pt）
-  deposit: number; // 預金残高（30万円以上で1pt）
-  salaryPension: number; // 給与・年金受取（20pt）
-  investment: number; // 積立NISA・iDeCo（30pt）
-  loan: number; // 住宅・車ローン（50pt）
-  petTrust: number; // ペット信託（30pt）
-  continuousYears: number; // 継続利用年数（1pt/年）
+  appLogin: number;
+  utilities: number;
+  deposit: number;
+  salaryPension: number;
+  investment: number;
+  loan: number;
+  petTrust: number;
+  continuousYears: number;
 }
 
 export interface User {
-  id: string;
+  id: string | number;
   name: string;
   rank: Rank;
   points: number;
@@ -43,30 +44,31 @@ export interface User {
 export type UsageLimitType = 'once' | 'monthly' | 'lifetime' | 'unlimited';
 
 export interface Coupon {
-  id: string;
+  id: string | number;
   title: string;
   description: string;
   imageUrl: string;
   requiredRank: Rank;
+  required_rank?: Rank; // 安全対策
   validUntil: string;
   storeName: string;
   discount: string;
   usageLimitType: UsageLimitType;
-  usageLimitCount?: number; // 制限回数（onceなら1、monthlyなら2、lifetimeなら2など）
-  validityPeriodDays?: number; // 有効期限（日数、BLUEの場合90日など）
+  usageLimitCount?: number;
+  validityPeriodDays?: number;
 }
 
 export interface Store {
-  id: string;
+  id: string | number;
   name: string;
   code: string;
 }
 
 export interface UsageRecord {
-  id: string;
-  userId: string;
-  couponId: string;
-  storeId: string;
+  id: string | number;
+  userId: string | number;
+  couponId: string | number;
+  storeId: string | number;
   usedAt: string;
   couponTitle: string;
   storeName: string;
@@ -95,32 +97,50 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [selectedCoupon, setSelectedCoupon] = useState<Coupon | null>(null);
   const [usedCouponStore, setUsedCouponStore] = useState<{ coupon: Coupon; store: Store } | null>(null);
-  const [usageRecords, setUsageRecords] = useState<UsageRecord[]>(mockUsageRecords);
+  
+  // 初期状態は空配列にして、本物と同期させる
+  const [usageRecords, setUsageRecords] = useState<UsageRecord[]>([]);
   const [showWelcomeBonus, setShowWelcomeBonus] = useState(false);
   const [loginErrorMessage, setLoginErrorMessage] = useState('');
 
-  // LocalStorageから使用履歴を読み込み
-  useEffect(() => {
-    const savedRecords = localStorage.getItem('usageRecords');
-    if (savedRecords) {
-      setUsageRecords(JSON.parse(savedRecords));
+  // アプリ起動時および画面切り替え時に、バックエンドの本物データを強制ロード
+  const syncWithBackendDB = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/analytics');
+      if (res.ok) {
+        const data = await res.json();
+        const mappedRecords: UsageRecord[] = (data.usageRecords || []).map((r: any) => ({
+          id: r.id,
+          userId: r.userId,
+          couponId: r.couponId,
+          storeId: r.storeId,
+          usedAt: r.usedAt,
+          couponTitle: r.couponTitle,
+          storeName: r.storeName,
+          discount: r.discount
+        }));
+        setUsageRecords(mappedRecords);
+      }
+    } catch (error) {
+      console.error("履歴のバックエンド同期エラー:", error);
     }
-  }, []);
+  };
+
+  useEffect(() => {
+    syncWithBackendDB();
+  }, [currentScreen]); // 画面が切り替わるたびに自動で裏側から本物データをリロード
 
   // 使用履歴を保存
   const saveUsageRecord = (record: UsageRecord) => {
-    const newRecords = [...usageRecords, record];
+    const newRecords = [record, ...usageRecords];
     setUsageRecords(newRecords);
-    localStorage.setItem('usageRecords', JSON.stringify(newRecords));
   };
 
-  // 初回ログイン判定と初回特典付与
-  const checkFirstLogin = (userId: string): boolean => {
+  // 初回ログイン判定
+  const checkFirstLogin = (userId: string | number): boolean => {
     const firstLoginKey = `firstLogin_${userId}`;
     const hasLoggedInBefore = localStorage.getItem(firstLoginKey);
-    
     if (!hasLoggedInBefore) {
-      // 初回ログイン: フラグを保存
       localStorage.setItem(firstLoginKey, 'true');
       return true;
     }
@@ -135,17 +155,12 @@ function App() {
       setCurrentScreen('admin-dashboard');
     } else {
       if (isNewUser) {
-        // 新規登録の場合は登録完了画面へ
         setCurrentScreen('signup-complete');
       } else {
-        // 既存ユーザーのログインの場合は初回ログイン判定
         const isFirstLogin = checkFirstLogin(userData.id);
-        
         if (isFirstLogin) {
-          // 初回特典ダイアログを表示
           setShowWelcomeBonus(true);
         }
-        
         setCurrentScreen('mypage');
       }
     }
@@ -153,7 +168,6 @@ function App() {
 
   const handleLoginError = (message: string) => {
     setLoginErrorMessage(message);
-    // 現在の画面に基づいてエラー画面を決定
     if (currentScreen === 'admin-login') {
       setCurrentScreen('admin-login-error');
     } else {
@@ -177,21 +191,53 @@ function App() {
     setCurrentScreen('store-code-input');
   };
 
-  const handleStoreCodeSubmit = (store: Store) => {
+  // 【修正確定版】バックエンドのUserCouponテーブルに実在する所持IDを送るロジック
+  const handleStoreCodeSubmit = async (store: Store) => {
     if (selectedCoupon && user) {
-      const record: UsageRecord = {
-        id: `usage_${Date.now()}`,
-        userId: user.id,
-        couponId: selectedCoupon.id,
-        storeId: store.id,
-        usedAt: new Date().toISOString(),
-        couponTitle: selectedCoupon.title,
-        storeName: store.name,
-        discount: selectedCoupon.discount
-      };
-      saveUsageRecord(record);
-      setUsedCouponStore({ coupon: selectedCoupon, store });
-      setCurrentScreen('completion');
+      try {
+        // 💡 1. マスタのcouponIdではなく、バックエンドが要求する所持レコードID（user_coupon_id）を安全に抽出
+        const targetUserCouponId = (selectedCoupon as any).user_coupon_id || selectedCoupon.id;
+
+        // 💡 2. 正しいパラメータ（所持IDと店舗の3桁コード）でPOST送信
+        const response = await fetch('http://localhost:5000/api/coupon/use', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_coupon_id: targetUserCouponId,
+            shop_code: store.code
+          })
+        });
+
+        const resData = await response.json();
+
+        // 💡 3. バックエンドが返した400エラー（無効なコード、あるいはIDミスマッチ）をトースト表示
+        if (!response.ok) {
+          toast.error(resData.error || 'クーポンの適用に失敗しました');
+          return;
+        }
+
+        // 💡 4. 成功したらフロント側の利用履歴の配列を更新して完了画面へ
+        const record: UsageRecord = {
+          id: resData.user_coupon_id || `usage_${Date.now()}`,
+          userId: user.id,
+          couponId: selectedCoupon.id,
+          storeId: store.id,
+          usedAt: new Date().toISOString(),
+          couponTitle: selectedCoupon.title,
+          storeName: store.name,
+          discount: selectedCoupon.discount
+        };
+        
+        saveUsageRecord(record);
+        setUsedCouponStore({ coupon: selectedCoupon, store });
+        
+        toast.success('データベースの消込が正常に完了しました！');
+        setCurrentScreen('completion');
+
+      } catch (error) {
+        console.error("消込API通信エラー:", error);
+        toast.error('サーバーへの消込リクエストに失敗しました');
+      }
     }
   };
 
@@ -207,7 +253,6 @@ function App() {
   };
 
   const handleSignupComplete = () => {
-    // 登録完了画面からログイン画面へ戻る
     setUser(null);
     setIsAdmin(false);
     setCurrentScreen('login');
@@ -328,7 +373,6 @@ function App() {
         />
       )}
       
-      {/* 初回特典通知ダイアログ */}
       {showWelcomeBonus && (
         <WelcomeBonusDialog onClose={() => setShowWelcomeBonus(false)} />
       )}

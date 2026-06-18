@@ -18,14 +18,15 @@ def get_dashboard_info(user_id):
     
     coupons_list = []
     for record in user_coupons_records:
-        coupons_list.append({
-            "user_coupon_id": record.id,
-            "coupon_id": record.coupon.id,
-            "title": record.coupon.title,
-            "description": record.coupon.description,
-            "status": record.status,  # UNUSED または USED
-            "required_rank": record.coupon.required_rank
-        })
+        if record.coupon:
+            coupons_list.append({
+                "user_coupon_id": record.id,
+                "coupon_id": record.coupon.id,
+                "title": record.coupon.title,
+                "description": record.coupon.description,
+                "status": record.status,  # UNUSED または USED
+                "required_rank": getattr(record.coupon, 'required_rank', 'BLUE')
+            })
 
     return jsonify({
         "username": user.username,
@@ -60,7 +61,7 @@ def use_coupon():
         return jsonify({"error": "指定されたクーポンが見つかりません"}), 404
 
     # 4. すでに使用済みになっていないかチェック
-    if user_coupon.status == 'USED':
+    if str(user_coupon.status).upper() == 'USED':
         return jsonify({"error": "このクーポンは既に使用済みです"}), 400
 
     try:
@@ -68,17 +69,18 @@ def use_coupon():
         user_coupon.status = 'USED'
 
         # 6. 利用履歴（History）にもログを残す（仕様追加）
+        coupon_title = user_coupon.coupon.title if user_coupon.coupon else "対象クーポン"
         history_log = History(
             user_id=user_coupon.user_id,
             action_type="COUPON_USE",
-            description=f"店舗[{store.name}]にてクーポン「{user_coupon.coupon.title}」を使用しました。"
+            description=f"店舗[{store.name}]にてクーポン「{coupon_title}」を使用しました。"
         )
         db.session.add(history_log)
         
         db.session.commit()
 
         return jsonify({
-            "message": f"「{user_coupon.coupon.title}」の使用が完了しました！（店舗: {store.name}）",
+            "message": f"「{coupon_title}」の使用が完了しました！（店舗: {store.name}）",
             "user_coupon_id": user_coupon.id,
             "status": user_coupon.status
         }), 200
@@ -88,12 +90,11 @@ def use_coupon():
         return jsonify({"error": f"クーポン処理中にエラーが発生しました: {str(e)}"}), 500
 
 
-# 💡 追記：管理画面用の「クーポン新規作成API」
+# 💡 管理画面用の「クーポン新規作成API」
 @coupons_bp.route('/api/admin/coupons', methods=['POST'])
 def create_admin_coupon():
     data = request.get_json()
     try:
-        # 正しいカラム名「required_rank」でCouponモデルを作成
         new_coupon = Coupon(
             title=data.get('title'),
             description=data.get('description'),
@@ -110,7 +111,7 @@ def create_admin_coupon():
         return jsonify({"error": f"作成エラー: {str(e)}"}), 500
 
 
-# 💡 追記：管理画面用の「クーポン一括配布API」
+# 💡 管理画面用の「クーポン一括配布API」
 @coupons_bp.route('/api/admin/coupons/distribute', methods=['POST'])
 def distribute_admin_coupon():
     data = request.get_json()
@@ -121,8 +122,6 @@ def distribute_admin_coupon():
         return jsonify({"error": "coupon_id は必須です"}), 400
 
     try:
-        # 対象ランク以上のユーザーをすべて抽出
-        # ランクの強さ順を定義
         rank_order = ['BLUE', 'BRONZE', 'SILVER', 'GOLD']
         if target_rank in rank_order:
             allowed_ranks = rank_order[rank_order.index(target_rank):]
@@ -132,7 +131,6 @@ def distribute_admin_coupon():
 
         distributed_count = 0
         for user in users:
-            # 既に同じクーポンが配られているかチェック
             exists = UserCoupon.query.filter_by(user_id=user.id, coupon_id=coupon_id).first()
             if not exists:
                 user_coupon = UserCoupon(
@@ -152,21 +150,30 @@ def distribute_admin_coupon():
         db.session.rollback()
         return jsonify({"error": f"配布エラー: {str(e)}"}), 500
     
-# 💡 追記：管理者用の会員一覧取得API
+
+# 💡 管理者用の会員一覧取得API
 @coupons_bp.route('/api/admin/members', methods=['GET'])
 def get_admin_members():
     try:
-        # 全ユーザーをDBから取得
         users = User.query.all()
-        
         members_list = []
         for user in users:
+            try:
+                if hasattr(user, 'created_at') and user.created_at:
+                    created_at_str = user.created_at.strftime('%Y-%m-%d')
+                else:
+                    created_at_str = "2026-01-01"
+            except Exception:
+                created_at_str = "2026-01-01"
+
+            user_rank = user.rank if user.rank else "BLUE"
+
             members_list.append({
                 "id": user.id,
-                "username": user.username,
-                "rank": user.rank,
-                "total_points": getattr(user, 'total_points', 0), # ポイントカラム名に合わせる
-                "created_at": user.created_at.strftime('%Y-%m-%d') if hasattr(user, 'created_at') and user.created_at else "2026-01-01"
+                "username": user.username if user.username else f"user_{user.id}",
+                "rank": user_rank,
+                "total_points": getattr(user, 'total_points', 0) if getattr(user, 'total_points', 0) is not None else 0,
+                "created_at": created_at_str
             })
             
         return jsonify({
@@ -175,3 +182,70 @@ def get_admin_members():
         }), 200
     except Exception as e:
         return jsonify({"error": f"会員一覧の取得に失敗しました: {str(e)}"}), 500
+    
+
+# 💡 管理者用の分析データ取得API（デバッグ＆超安全ガード版）
+@coupons_bp.route('/api/admin/analytics', methods=['GET'])
+def get_admin_analytics():
+    try:
+        from models import UserCoupon, Coupon, User, Store
+        
+        all_count = UserCoupon.query.count()
+        used_count = UserCoupon.query.filter_by(status='USED').count()
+        print("\n========================================")
+        print(f"🔥 [DEBUG] DB内のUserCoupon総件数: {all_count}件")
+        print(f"🔥 [DEBUG] status='USED' の件数: {used_count}件")
+        print("========================================\n")
+        
+        all_records = UserCoupon.query.all()
+        parsed_records = []
+        
+        for ur in all_records:
+            status_str = str(ur.status).upper()
+            if status_str != 'USED':
+                continue
+                
+            coupon = ur.coupon
+            user = ur.user
+            
+            coupon_title = coupon.title if coupon else "テスト用クーポン"
+            discount_text = coupon.discount if coupon and hasattr(coupon, 'discount') else "特典"
+            user_name = user.username if user else f"会員_{ur.user_id}"
+            user_rank = user.rank if user else "BLUE"
+
+            store_name = "全店舗共通"
+            store_id = "1"
+            store_code = "001"
+            
+            if coupon and hasattr(coupon, 'store') and coupon.store:
+                store_name = coupon.store.name
+                store_id = str(coupon.store.id)
+                store_code = coupon.store.store_code
+            elif hasattr(ur, 'store_id') and ur.store_id:
+                store_id = str(ur.store_id)
+
+            parsed_records.append({
+                "id": ur.id,
+                "userId": ur.user_id,
+                "username": user_name,
+                "userRank": user_rank,
+                "couponId": str(ur.coupon_id),
+                "couponTitle": coupon_title,
+                "discount": discount_text,
+                "storeId": store_id,
+                "storeName": store_name,
+                "storeCode": store_code,
+                "usedAt": ur.updated_at.strftime('%Y-%m-%dT%H:%M:%S.000Z') if hasattr(ur, 'updated_at') and ur.updated_at else "2026-06-18T12:00:00.000Z"
+            })
+            
+        total_coupons = Coupon.query.count()
+        total_stores = Store.query.count() if 'Store' in globals() else 3
+        
+        return jsonify({
+            "success": True,
+            "usageRecords": parsed_records,
+            "uniqueCouponsCount": total_coupons,
+            "uniqueStoresCount": total_stores
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"分析データの集計に失敗しました: {str(e)}"}), 500

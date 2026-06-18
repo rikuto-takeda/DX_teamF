@@ -40,6 +40,7 @@ class Store(db.Model):
     store_code = db.Column(db.String(20), unique=True, nullable=False)
     location = db.Column(db.String(150), nullable=True)
 
+<<<<<<< Updated upstream
 # 4. Couponsテーブル（クーポン情報、必要ランク等）
 class Coupon(db.Model):
     __tablename__ = 'coupons'
@@ -48,6 +49,17 @@ class Coupon(db.Model):
     description = db.Column(db.Text, nullable=True)
     discount_info = db.Column(db.String(100), nullable=False)
     required_rank = db.Column(db.String(20), nullable=False, default='BLUE')
+=======
+# models.py に追記するコード
+
+class Coupon(db.Model):
+    __tablename__ = 'coupons'
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(100), nullable=False)        # クーポン名（例: ダイシン防災グッズ）
+    description = db.Column(db.Text, nullable=True)          # 詳細説明
+    required_rank = db.Column(db.String(20), default='BLUE') # 必要ランク (BLUE, SILVER等)
+    is_initial_bonus = db.Column(db.Boolean, default=False)  # 初回特典フラグ
+>>>>>>> Stashed changes
 
 # 5. UserCouponsテーブル（ユーザーのクーポン所持状態管理）
 class UserCoupon(db.Model):
@@ -55,8 +67,17 @@ class UserCoupon(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     coupon_id = db.Column(db.Integer, db.ForeignKey('coupons.id'), nullable=False)
+<<<<<<< Updated upstream
     status = db.Column(db.String(20), nullable=False, default='unused')
     allocated_at = db.Column(db.String(20), nullable=False, default='2026/06/18')
+=======
+    status = db.Column(db.String(20), default='UNUSED')      # ステータス (UNUSED: 未使用, USED: 使用済)
+    assigned_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    # リレーション設定（データを取り出しやすくするため）
+    user = db.relationship('User', backref=db.backref('user_coupons', lazy=True))
+    coupon = db.relationship('Coupon', backref=db.backref('user_coupons', lazy=True))
+>>>>>>> Stashed changes
 
     coupon = db.relationship('Coupon')
 

@@ -1,61 +1,74 @@
 import { useState } from 'react';
 import { User } from '../App';
-import { mockUsers } from '../utils/mockData';
 import { Lock, User as UserIcon, Shield, UserPlus } from 'lucide-react';
 
 interface LoginPageProps {
   onLogin: (user: User, isAdmin?: boolean) => void;
   onSignup?: () => void;
-  onAdminLogin?: () => void;
   onLoginError?: (errorMessage: string) => void;
 }
 
-export function LoginPage({ onLogin, onSignup, onAdminLogin, onLoginError }: LoginPageProps) {
+export function LoginPage({ onLogin, onSignup, onLoginError }: LoginPageProps) {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isAdminMode, setIsAdminMode] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // ⚡️ Flaskのバックエンドと実際に通信する関数
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    // 管理者ログイン
-    if (isAdminMode) {
-      if (userId === 'admin' && password === 'admin123') {
-        onLogin(
-          {
-            id: 'admin',
-            name: '管理者',
-            rank: 'GOLD',
-            points: 0,
-            joinDate: new Date().toISOString()
-          },
-          true
-        );
-      } else {
-        const msg = '管理者IDまたはパスワードが正しくありません';
-        setError(msg);
-        if (onLoginError) {
-          setTimeout(() => {
-            onLoginError(msg);
-          }, 1500);
-        }
-      }
-      return;
-    }
+    // 送信先URLを、管理者か一般ユーザーかで切り替える
+    const url = isAdminMode 
+      ? 'http://localhost:5000/api/admin/login' 
+      : 'http://localhost:5000/api/auth/login';
 
-    // 通常ユーザーログイン
-    const user = mockUsers[userId];
-    if (user && password === 'password') {
-      onLogin(user, false);
-    } else {
-      const msg = 'IDまたはパスワードが正しくありません';
+    try {
+      // 🚀 本物のネットワーク通信を実行！
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: userId,
+          password: password
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        // バックエンドからエラーが返ってきた場合（401や400など）
+        throw new Error(data.error || 'ログインに失敗しました');
+      }
+
+      // ログイン成功時：Flaskから返ってきた本物のユーザーデータをフロントの状態にセット
+      if (isAdminMode) {
+        onLogin({
+          id: data.admin.id.toString(),
+          name: data.admin.username,
+          rank: 'GOLD', // 管理者は一律GOLD扱い
+          points: 0,
+          joinDate: new Date().toISOString()
+        }, true);
+      } else {
+        onLogin({
+          id: data.user.id.toString(),
+          name: data.user.username,
+          rank: data.user.rank,
+          points: 15, // 初期BLUEポイント
+          joinDate: new Date().toISOString()
+        }, false);
+      }
+
+    } catch (err: any) {
+      // エラーが起きたら画面に赤文字で表示
+      const msg = err.message || 'サーバーとの通信に失敗しました';
       setError(msg);
       if (onLoginError) {
-        setTimeout(() => {
-          onLoginError(msg);
-        }, 1500);
+        onLoginError(msg);
       }
     }
   };
@@ -172,26 +185,9 @@ export function LoginPage({ onLogin, onSignup, onAdminLogin, onLoginError }: Log
           </form>
 
           <div className="mt-8 pt-6 border-t border-gray-200">
-            {isAdminMode ? (
-              <>
-                <p className="text-xs text-gray-500 mb-2">管理者アカウント:</p>
-                <div className="text-xs text-gray-600 space-y-1 bg-purple-50 p-3 rounded-lg">
-                  <p>ID: <span className="font-mono">admin</span></p>
-                  <p>パスワード: <span className="font-mono">admin123</span></p>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-xs text-gray-500 mb-2">デモアカウント:</p>
-                <div className="text-xs text-gray-600 space-y-1 bg-gray-50 p-3 rounded-lg">
-                  <p>ID: <span className="font-mono">user1</span> (GOLD: 105pt)</p>
-                  <p>ID: <span className="font-mono">user2</span> (SILVER: 75pt)</p>
-                  <p>ID: <span className="font-mono">user3</span> (BRONZE: 35pt)</p>
-                  <p>ID: <span className="font-mono">demo</span> (BLUE: 15pt)</p>
-                  <p className="mt-2">パスワード: <span className="font-mono">password</span></p>
-                </div>
-              </>
-            )}
+            <p className="text-xs text-gray-400 text-center">
+              ⚡️ 本物のローカルバックエンド(Flask)とリアルタイム通信中
+            </p>
           </div>
 
           {onSignup && (

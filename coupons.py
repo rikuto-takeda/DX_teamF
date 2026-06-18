@@ -151,3 +151,27 @@ def distribute_admin_coupon():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"配布エラー: {str(e)}"}), 500
+    
+# 💡 追記：管理者用の会員一覧取得API
+@coupons_bp.route('/api/admin/members', methods=['GET'])
+def get_admin_members():
+    try:
+        # 全ユーザーをDBから取得
+        users = User.query.all()
+        
+        members_list = []
+        for user in users:
+            members_list.append({
+                "id": user.id,
+                "username": user.username,
+                "rank": user.rank,
+                "total_points": getattr(user, 'total_points', 0), # ポイントカラム名に合わせる
+                "created_at": user.created_at.strftime('%Y-%m-%d') if hasattr(user, 'created_at') and user.created_at else "2026-01-01"
+            })
+            
+        return jsonify({
+            "success": True,
+            "members": members_list
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"会員一覧の取得に失敗しました: {str(e)}"}), 500

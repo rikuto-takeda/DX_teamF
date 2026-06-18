@@ -98,3 +98,40 @@ def login():
         }), 200
     
     return jsonify({"error": "ユーザー名またはパスワードが間違っています"}), 401
+
+# --- ここから auth.py の末尾に追記 ---
+
+@auth_bp.route('/api/admin/login', methods=['POST'])
+def admin_login():
+    """
+    【ステップ5】管理者ログイン機能API
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "BAD_REQUEST", "message": "リクエストデータが空です"}), 400
+
+    username = data.get('username')
+    password = data.get('password')
+
+    # バリデーション
+    if not username or not password:
+        return jsonify({"error": "VALIDATION_FAILED", "message": "ユーザー名とパスワードは必須です"}), 400
+
+    # 管理者テーブル（Admin）から検索
+    from models import Admin
+    admin = Admin.query.filter_by(admin_username=username).first()
+
+    # ユーザーが存在し、パスワードのハッシュが一致するか検証
+    if admin and check_password_hash(admin.password_hash, password):
+        # ログイン成功時のレスポンス
+        return jsonify({
+            "message": "管理者ログイン成功",
+            "admin": {
+                "id": admin.id,
+                "username": admin.admin_username,
+                "role": "ADMIN"
+            }
+        }), 200
+
+    # 認証失敗
+    return jsonify({"error": "AUTH_FAILED", "message": "管理者名またはパスワードが間違っています"}), 401

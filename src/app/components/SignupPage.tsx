@@ -20,6 +20,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -64,29 +65,55 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
       return;
     }
 
-    // 新規ユーザーを作成（初期ランクはBLUE）
-    const newUser: User = {
-      id: `user_${Date.now()}`,
-      name: formData.name,
-      rank: 'BLUE' as Rank,
-      points: 0,
-      joinDate: new Date().toISOString()
-    };
+    setLoading(true);
+    setErrors({});
 
-    // LocalStorageに保存（実際にはバックエンドAPI呼び出し）
-    const users = JSON.parse(localStorage.getItem('users') || '[]');
-    users.push(newUser);
-    localStorage.setItem('users', JSON.stringify(users));
+    try {
+      // 📡 Flaskの新規登録APIにデータを送信
+      const response = await fetch('http://localhost:5000/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: formData.name,
+          email: formData.email,
+          password: formData.password,
+          account_number: formData.bankAccount
+        }),
+      });
 
-    // 新規ユーザーとして登録（第3引数にtrueを渡す）
-    onSignup(newUser, false, true);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || '新規登録に失敗しました。');
+      }
+
+      // ✨ エラー回避のための「安全なデータ読み込み」
+      // data.user や data.user.id が undefined でもエラーにならず、右側のバックアップ値を使います
+      const newUser: User = {
+        id: data?.user?.id?.toString() || `user_${Date.now()}`,
+        name: data?.user?.username || formData.name,
+        rank: (data?.user?.rank || 'BLUE') as Rank,
+        points: data?.user?.total_points || 15, // 初期ログインボーナスとして15ptを仮セット
+        joinDate: new Date().toISOString()
+      };
+
+      // 次の画面（登録完了画面など）へ遷移させる
+      onSignup(newUser, false, true);
+
+    } catch (err: any) {
+      setErrors({ server: err.message || 'サーバーとの通信に失敗しました。' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -95,7 +122,8 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 pt-8 pb-6">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-white mb-6 hover:opacity-80 transition-opacity"
+          disabled={loading}
+          className="flex items-center gap-2 text-white mb-6 hover:opacity-80 transition-opacity disabled:opacity-50"
         >
           <ArrowLeft className="w-5 h-5" />
           <span className="text-sm">ログイン画面へ戻る</span>
@@ -116,17 +144,25 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            {/* サーバーからのエラー（重複エラーなど）を最上部に表示 */}
+            {errors.server && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm font-medium">
+                {errors.server}
+              </div>
+            )}
+
             {/* 氏名 */}
             <div>
               <label className="block text-sm text-gray-700 mb-1">
-                氏名 <span className="text-red-500">*</span>
+                ユーザーID（ログイン用ユーザー名） <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="山田 太郎"
+                placeholder="例: takeda_dx"
+                disabled={loading}
               />
               {errors.name && (
                 <p className="text-xs text-red-500 mt-1">{errors.name}</p>
@@ -144,6 +180,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="example@example.com"
+                disabled={loading}
               />
               {errors.email && (
                 <p className="text-xs text-red-500 mt-1">{errors.email}</p>
@@ -161,6 +198,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="8文字以上"
+                disabled={loading}
               />
               {errors.password && (
                 <p className="text-xs text-red-500 mt-1">{errors.password}</p>
@@ -178,6 +216,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                 onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="パスワードを再入力"
+                disabled={loading}
               />
               {errors.confirmPassword && (
                 <p className="text-xs text-red-500 mt-1">{errors.confirmPassword}</p>
@@ -198,6 +237,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                     checked={formData.gender === 'male'}
                     onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
                     className="mr-2"
+                    disabled={loading}
                   />
                   <span className="text-sm">男性</span>
                 </label>
@@ -209,6 +249,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                     checked={formData.gender === 'female'}
                     onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
                     className="mr-2"
+                    disabled={loading}
                   />
                   <span className="text-sm">女性</span>
                 </label>
@@ -220,6 +261,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                     checked={formData.gender === 'other'}
                     onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
                     className="mr-2"
+                    disabled={loading}
                   />
                   <span className="text-sm">その他</span>
                 </label>
@@ -242,6 +284,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                 placeholder="例: 25"
                 min="18"
                 max="100"
+                disabled={loading}
               />
               {errors.age && (
                 <p className="text-xs text-red-500 mt-1">{errors.age}</p>
@@ -259,6 +302,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                 onChange={(e) => setFormData({ ...formData, bankAccount: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="1234567"
+                disabled={loading}
               />
               <div className="mt-2 space-y-1">
                 <p className="text-xs text-gray-500">
@@ -286,6 +330,7 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
                   checked={formData.agreeTerms}
                   onChange={(e) => setFormData({ ...formData, agreeTerms: e.target.checked })}
                   className="mt-1 mr-2"
+                  disabled={loading}
                 />
                 <span className="text-sm text-gray-700">
                   <a href="#" className="text-blue-600 hover:underline">利用規約</a>
@@ -311,10 +356,11 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
             {/* 送信ボタン */}
             <button
               type="submit"
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-50 shadow-md"
             >
               <UserPlus className="w-5 h-5" />
-              <span>会員登録する</span>
+              <span>{loading ? '登録データを通信中...' : '会員登録する'}</span>
             </button>
           </form>
         </div>
@@ -325,7 +371,8 @@ export function SignupPage({ onSignup, onBack }: SignupPageProps) {
             既にアカウントをお持ちの方は
             <button
               onClick={onBack}
-              className="text-blue-600 hover:underline ml-1"
+              disabled={loading}
+              className="text-blue-600 hover:underline ml-1 disabled:opacity-50"
             >
               こちらからログイン
             </button>

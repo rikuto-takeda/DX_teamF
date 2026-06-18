@@ -1,96 +1,96 @@
-import os
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash
 
 db = SQLAlchemy()
 
-# 1. Usersテーブル（会員情報）
+# ------------------------------------------------------------------
+# 【モデル定義】
+# ------------------------------------------------------------------
+
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    rank = db.Column(db.String(20), nullable=False, default='BLUE')
-    total_points = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.String(20), nullable=False, default='2026/06/18')
-    
-    # ポイント内訳項目
-    login_points = db.Column(db.Integer, default=0)
-    credit_points = db.Column(db.Integer, default=0)
-    salary_points = db.Column(db.Integer, default=0)
-    loan_points = db.Column(db.Integer, default=0)
+    rank = db.Column(db.String(20), default='BLUE')         # BLUE, BRONZE, SILVER, GOLD
+    total_points = db.Column(db.Integer, default=0)         # 判定用累計ポイント
 
-    user_coupons = db.relationship('UserCoupon', backref='user', lazy=True)
-    histories = db.relationship('History', backref='user', lazy=True)
-
-# 2. Adminsテーブル（管理者情報）
 class Admin(db.Model):
     __tablename__ = 'admins'
     id = db.Column(db.Integer, primary_key=True)
     admin_username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(120), nullable=False)
-    role = db.Column(db.String(50), nullable=False, default='super_admin')
+    role = db.Column(db.String(50), default='STAFF')         # SUPERADMIN, STAFF
 
-# 3. Storesテーブル（店舗情報：001〜999等）
 class Store(db.Model):
     __tablename__ = 'stores'
     id = db.Column(db.Integer, primary_key=True)
-    store_name = db.Column(db.String(100), nullable=False)
-    store_code = db.Column(db.String(20), unique=True, nullable=False)
-    location = db.Column(db.String(150), nullable=True)
+    store_code = db.Column(db.String(50), unique=True, nullable=False) # 店舗識別コード
+    name = db.Column(db.String(100), nullable=False)
+    category = db.Column(db.String(50))                      # ダイシン、シシャなど
 
-# 4. Couponsテーブル（クーポン情報、必要ランク等）
 class Coupon(db.Model):
     __tablename__ = 'coupons'
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), nullable=False)
-    description = db.Column(db.Text, nullable=True)
-    discount_info = db.Column(db.String(100), nullable=False)
-    required_rank = db.Column(db.String(20), nullable=False, default='BLUE')
+    description = db.Column(db.Text)
+    discount_info = db.Column(db.String(100))                # 特典内容
+    required_rank = db.Column(db.String(20), default='BLUE') # 利用可能な最低ランク
 
-# 5. UserCouponsテーブル（ユーザーのクーポン所持状態管理）
 class UserCoupon(db.Model):
     __tablename__ = 'user_coupons'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     coupon_id = db.Column(db.Integer, db.ForeignKey('coupons.id'), nullable=False)
-    status = db.Column(db.String(20), nullable=False, default='unused')
-    allocated_at = db.Column(db.String(20), nullable=False, default='2026/06/18')
+    status = db.Column(db.String(20), default='unused')      # unused, used
 
-    coupon = db.relationship('Coupon')
-
-# 6. Historiesテーブル（利用履歴・ポイント履歴）
 class History(db.Model):
     __tablename__ = 'histories'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    action_type = db.Column(db.String(50), nullable=False)
-    description = db.Column(db.Text, nullable=False)
-    store_id = db.Column(db.Integer, db.ForeignKey('stores.id'), nullable=True)
-    user_coupon_id = db.Column(db.Integer, db.ForeignKey('user_coupons.id'), nullable=True)
-    points_changed = db.Column(db.Integer, default=0)
-    executed_at = db.Column(db.String(20), nullable=False, default='2026/06/18 11:47')
-
-    store = db.relationship('Store')
+    action_type = db.Column(db.String(50), nullable=False)   # RANK_UP, COUPON_USE, etc.
+    description = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
 
 
-# 📊 初期テストデータの挿入用関数
+# ------------------------------------------------------------------
+# 【初期データ投入ロジック】本物のパスワードハッシュ対応版
+# ------------------------------------------------------------------
 def init_sample_data(app):
-    with app.app_context():
-        db.create_all()
-        
-        # ① 管理者アカウント
-        if not Admin.query.filter_by(admin_username="admin").first():
-            db.session.add(Admin(admin_username="admin", password_hash=generate_password_hash("admin123")))
-        
-        # ② 店舗コード
-        if not Store.query.filter_by(store_code="001").first():
-            db.session.add(Store(store_name="シーシャカフェ PukuPuku 新橋店", store_code="001"))
-            
-        # ③ クーポンマスタ
-        if not Coupon.query.filter_by(title="初回特典スタータークーポン").first():
-            db.session.add(Coupon(title="初回特典スタータークーポン", description="全品10%OFF", discount_info="10%OFF", required_rank="BLUE"))
-            db.session.add(Coupon(title="プレミアムGOLD限定クーポン", description="VIPルーム無料", discount_info="VIP無料", required_rank="GOLD"))
-        
-        db.session.commit()
+    # 既に demo_user が登録されている場合は、二重登録を防ぐため何もしない
+    if User.query.filter_by(username='demo_user').first():
+        return
+
+    print("⚡️ 初期デモデータをデータベースに作成中...")
+
+    # パスワードを本物のハッシュ関数で暗号化（重要）
+    hashed_password = generate_password_hash('password123')
+
+    # 1. デモ一般ユーザーの作成
+    demo_user = User(
+        username='demo_user',
+        password_hash=hashed_password,
+        email='demo@example.com',
+        rank='BLUE',
+        total_points=15
+    )
+
+    # 2. デモ管理者の作成
+    admin_user = Admin(
+        admin_username='admin_user',
+        password_hash=hashed_password,
+        role='SUPERADMIN'
+    )
+
+    # 3. テスト用対象店舗の作成
+    daishin = Store(store_code="DAISHIN-001", name="ダイシン 仙台あおば店", category="ダイシン")
+    pukupuku = Store(store_code="PUKUPUKU-SHIMBASHI", name="Shisha Cafe & Bar PukuPuku 新橋店", category="シシャ")
+
+    db.session.add(demo_user)
+    db.session.add(admin_user)
+    db.session.add(daishin)
+    db.session.add(pukupuku)
+    db.session.commit()
+    
+    print("✅ 初期デモデータの作成が完了しました！")

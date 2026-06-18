@@ -86,3 +86,68 @@ def use_coupon():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"クーポン処理中にエラーが発生しました: {str(e)}"}), 500
+
+
+# 💡 追記：管理画面用の「クーポン新規作成API」
+@coupons_bp.route('/api/admin/coupons', methods=['POST'])
+def create_admin_coupon():
+    data = request.get_json()
+    try:
+        # 正しいカラム名「required_rank」でCouponモデルを作成
+        new_coupon = Coupon(
+            title=data.get('title'),
+            description=data.get('description'),
+            required_rank=data.get('required_rank', 'BLUE')
+        )
+        db.session.add(new_coupon)
+        db.session.commit()
+        return jsonify({
+            "message": "クーポンマスタを作成しました",
+            "coupon": {"id": new_coupon.id, "title": new_coupon.title}
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"作成エラー: {str(e)}"}), 500
+
+
+# 💡 追記：管理画面用の「クーポン一括配布API」
+@coupons_bp.route('/api/admin/coupons/distribute', methods=['POST'])
+def distribute_admin_coupon():
+    data = request.get_json()
+    coupon_id = data.get('coupon_id')
+    target_rank = data.get('target_rank', 'BLUE')
+
+    if not coupon_id:
+        return jsonify({"error": "coupon_id は必須です"}), 400
+
+    try:
+        # 対象ランク以上のユーザーをすべて抽出
+        # ランクの強さ順を定義
+        rank_order = ['BLUE', 'BRONZE', 'SILVER', 'GOLD']
+        if target_rank in rank_order:
+            allowed_ranks = rank_order[rank_order.index(target_rank):]
+            users = User.query.filter(User.rank.in_(allowed_ranks)).all()
+        else:
+            users = User.query.all()
+
+        distributed_count = 0
+        for user in users:
+            # 既に同じクーポンが配られているかチェック
+            exists = UserCoupon.query.filter_by(user_id=user.id, coupon_id=coupon_id).first()
+            if not exists:
+                user_coupon = UserCoupon(
+                    user_id=user.id,
+                    coupon_id=coupon_id,
+                    status='UNUSED'
+                )
+                db.session.add(user_coupon)
+                distributed_count += 1
+
+        db.session.commit()
+        return jsonify({
+            "message": f"{distributed_count}人のユーザーに一括配布しました",
+            "distributed_count": distributed_count
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"配布エラー: {str(e)}"}), 500

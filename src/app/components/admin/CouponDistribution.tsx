@@ -1,5 +1,5 @@
 // CouponDistribution.tsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { rankConfigs } from '../../utils/rankConfig';
 import { 
   Gift, 
@@ -13,20 +13,21 @@ import {
   Calendar,
   Target,
   Send,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Rank = 'BLUE' | 'BRONZE' | 'SILVER' | 'GOLD';
 type DistributionStep = 'create' | 'conditions' | 'confirm' | 'complete';
 
-interface CouponData {
+// 💡 バックエンド（SQLite）から取得するクーポンマスタの型
+interface DBCoupon {
+  id: number;
   title: string;
   description: string;
   discount: string;
-  requiredRank: Rank;
-  validUntil: string;
-  storeName: string;
+  required_rank: Rank;
 }
 
 interface DistributionConditions {
@@ -38,18 +39,16 @@ interface DistributionConditions {
 
 export function CouponDistribution() {
   const [currentStep, setCurrentStep] = useState<DistributionStep>('create');
-  const [couponData, setCouponData] = useState<CouponData>({
-    title: '',
-    description: '',
-    discount: '',
-    requiredRank: 'BLUE',
-    validUntil: '',
-    storeName: ''
-  });
+  
+  // 💡 マスタデータ関連のState
+  const [masterCoupons, setMasterCoupons] = useState<DBCoupon[]>([]);
+  const [selectedCouponId, setSelectedCouponId] = useState<string>('');
+  const [selectedCoupon, setSelectedCoupon] = useState<DBCoupon | null>(null);
+  const [isLoadingMasters, setIsLoadingMasters] = useState(true);
 
   const [conditions, setConditions] = useState<DistributionConditions>({
-    startDate: '',
-    endDate: '',
+    startDate: '2026-06-19', // 今日(2026年6月19日)の日付を初期値に
+    endDate: '2026-07-19',
     usageLimit: 1,
     autoExpire: true
   });
@@ -57,13 +56,40 @@ export function CouponDistribution() {
   const [isDistributing, setIsDistributing] = useState(false);
   const [distributedCount, setDistributedCount] = useState(0);
 
+  // 💡 画面起動時に本物のクーポンマスタ一覧をDBから読み込む
+  const fetchMasterCoupons = async () => {
+    try {
+      setIsLoadingMasters(true);
+      const response = await fetch('http://localhost:5000/api/admin/coupons');
+      if (!response.ok) throw new Error('マスタデータの取得に失敗しました');
+      const data = await response.json();
+      setMasterCoupons(data);
+    } catch (error: any) {
+      console.error(error);
+      toast.error('クーポンマスタの同期に失敗しました');
+    } finally {
+      setIsLoadingMasters(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMasterCoupons();
+  }, []);
+
+  // 💡 クーポンが選択されたら、そのオブジェクトをStateに保持する
+  const handleCouponChange = (id: string) => {
+    setSelectedCouponId(id);
+    const coupon = masterCoupons.find(c => String(c.id) === id);
+    setSelectedCoupon(coupon || null);
+  };
+
   const getTargetUserCount = () => {
-    return 13; 
+    return 13; // 固定ダミー数（仕様に準拠）
   };
 
   const handleCreateStep = () => {
-    if (!couponData.title || !couponData.description || !couponData.discount || !couponData.validUntil || !couponData.storeName) {
-      toast.error('すべての項目を入力してください');
+    if (!selectedCouponId) {
+      toast.error('配布するクーポンマスタをリストから選択してください');
       return;
     }
     setCurrentStep('conditions');
@@ -77,39 +103,25 @@ export function CouponDistribution() {
     setCurrentStep('confirm');
   };
 
-  // 💡 配布実行（バックエンドの required_rank に完全対応）
+  // 💡 配布実行（既存マスタを対象に、一括配布APIだけを一撃実行！）
   const handleDistribute = async () => {
+    if (!selectedCoupon) return;
+    
     setIsDistributing(true);
     try {
-      // 1. クーポンマスタ作成 API を実行
-      const createRes = await fetch('http://localhost:5000/api/admin/coupons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: couponData.title,
-          description: couponData.description,
-          required_rank: couponData.requiredRank // 💡 DBのカラム名に適合
-        })
-      });
-
-      if (!createRes.ok) {
-        throw new Error('クーポンマスタの作成に失敗しました');
-      }
-      const createData = await createRes.json();
-      const newCouponId = createData.coupon.id;
-
-      // 2. クーポン一括配布 API を実行
+      // 💡 重複作成はせず、選んだマスタIDを使って一括配布APIをストレートに実行
       const distributeRes = await fetch('http://localhost:5000/api/admin/coupons/distribute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          coupon_id: newCouponId,
-          target_rank: couponData.requiredRank
+          coupon_id: selectedCoupon.id,
+          target_rank: selectedCoupon.required_rank // マスタで定義されたランクを対象に配る
         })
       });
 
       if (!distributeRes.ok) {
-        throw new Error('クーポンの配布処理に失敗しました');
+        const errData = await distributeRes.json();
+        throw new Error(errData.error || 'クーポンの配布処理に失敗しました');
       }
 
       const distributeData = await distributeRes.json();
@@ -128,24 +140,19 @@ export function CouponDistribution() {
   const handleReset = () => {
     setCurrentStep('create');
     setDistributedCount(0);
-    setCouponData({
-      title: '',
-      description: '',
-      discount: '',
-      requiredRank: 'BLUE',
-      validUntil: '',
-      storeName: ''
-    });
+    setSelectedCouponId('');
+    setSelectedCoupon(null);
     setConditions({
-      startDate: '',
-      endDate: '',
+      startDate: '2026-06-19',
+      endDate: '2026-07-19',
       usageLimit: 1,
       autoExpire: true
     });
+    fetchMasterCoupons(); // 再度マスタを同期
   };
 
   const steps = [
-    { key: 'create', label: 'クーポン作成', icon: Gift },
+    { key: 'create', label: 'クーポン選択', icon: Gift },
     { key: 'conditions', label: '配布条件', icon: Settings },
     { key: 'confirm', label: '確認', icon: CheckCircle },
     { key: 'complete', label: '完了', icon: Check }
@@ -156,8 +163,8 @@ export function CouponDistribution() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl mb-1">クーポン配布</h2>
-        <p className="text-sm text-gray-600">新しいクーポンを作成して配布します</p>
+        <h2 className="text-2xl mb-1">クーポン配布コントロール</h2>
+        <p className="text-sm text-gray-600">データベースに登録されているマスタを選択し、対象ユーザーへ一括配布します</p>
       </div>
 
       {/* ステップインジケーター */}
@@ -199,122 +206,76 @@ export function CouponDistribution() {
 
       {/* ステップコンテンツ */}
       <div className="bg-white rounded-xl shadow-md p-8">
-        {/* ステップ1: クーポン作成画面 */}
+        {/* ステップ1: クーポン選択画面 */}
         {currentStep === 'create' && (
           <div>
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                <Gift className="w-6 h-6 text-purple-600" />
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
+                  <Gift className="w-6 h-6 text-purple-600" />
+                </div>
+                <div>
+                  <h3 className="text-xl">配布対象クーポンの選択</h3>
+                  <p className="text-sm text-gray-600">配布する既存のクーポンマスタをデータベースから選択してください</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xl">クーポン作成</h3>
-                <p className="text-sm text-gray-600">配布するクーポンの内容を設定してください</p>
-              </div>
+              <button 
+                onClick={fetchMasterCoupons}
+                className="p-2 text-gray-400 hover:text-purple-600 transition-colors"
+                title="マスタを再同期"
+              >
+                <RefreshCw className={`w-5 h-5 ${isLoadingMasters ? 'animate-spin' : ''}`} />
+              </button>
             </div>
 
-            <div className="space-y-4 max-w-2xl">
+            <div className="space-y-5 max-w-2xl">
               <div>
-                <label className="block text-sm text-gray-700 mb-2">
-                  クーポン名 <span className="text-red-500">*</span>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  対象クーポンマスタ <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  value={couponData.title}
-                  onChange={(e) => setCouponData({ ...couponData, title: e.target.value })}
-                  placeholder="例: 新規登録キャンペーン"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">
-                  説明文 <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  value={couponData.description}
-                  onChange={(e) => setCouponData({ ...couponData, description: e.target.value })}
-                  placeholder="クーポンの詳細を入力してください"
-                  rows={3}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">
-                  割引内容 <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={couponData.discount}
-                  onChange={(e) => setCouponData({ ...couponData, discount: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="">選択してください</option>
-                  <option value="5%OFF">5%OFF</option>
-                  <option value="10%OFF">10%OFF</option>
-                  <option value="15%OFF">15%OFF</option>
-                  <option value="20%OFF">20%OFF</option>
-                  <option value="25%OFF">25%OFF</option>
-                  <option value="30%OFF">30%OFF</option>
-                  <option value="300円引き">300円引き</option>
-                  <option value="500円引き">500円引き</option>
-                  <option value="1,000円引き">1,000円引き</option>
-                  <option value="1,500円引き">1,500円引き</option>
-                  <option value="2,000円引き">2,000円引き</option>
-                  <option value="ドリンク1杯無料">ドリンク1杯無料</option>
-                  <option value="デザート1品無料">デザート1品無料</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">
-                  店舗名 <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={couponData.storeName}
-                  onChange={(e) => setCouponData({ ...couponData, storeName: e.target.value })}
-                  placeholder="例: カフェ・ド・仙台"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">
-                    必要ランク <span className="text-red-500">*</span>
-                  </label>
+                {isLoadingMasters ? (
+                  <div className="text-sm text-gray-400 py-3">マスタデータをロード中...</div>
+                ) : (
                   <select
-                    value={couponData.requiredRank}
-                    onChange={(e) => setCouponData({ ...couponData, requiredRank: e.target.value as Rank })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    value={selectedCouponId}
+                    onChange={(e) => handleCouponChange(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
                   >
-                    <option value="BLUE">BLUE</option>
-                    <option value="BRONZE">BRONZE</option>
-                    <option value="SILVER">SILVER</option>
-                    <option value="GOLD">GOLD</option>
+                    <option value="">-- 配布するクーポンを選択してください --</option>
+                    {masterCoupons.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        [#{c.id}] {c.title} ({c.discount}) - 必要ランク: {c.required_rank}
+                      </option>
+                    ))}
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">
-                    有効期限 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={couponData.validUntil}
-                    onChange={(e) => setCouponData({ ...couponData, validUntil: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
+                )}
               </div>
+
+              {/* 選択したクーポンの詳細プレビュー */}
+              {selectedCoupon && (
+                <div className="bg-purple-50 border border-purple-100 rounded-xl p-5 space-y-3 animate-fadeIn">
+                  <div className="flex justify-between items-center">
+                    <h4 className="font-bold text-purple-900 text-base">{selectedCoupon.title}</h4>
+                    <span className="px-2 py-0.5 rounded text-xs font-bold text-white bg-purple-600">
+                      {selectedCoupon.required_rank}以上対象
+                    </span>
+                  </div>
+                  <p className="text-sm text-purple-700">{selectedCoupon.description}</p>
+                  <div className="text-xs text-purple-500 pt-1 border-t border-purple-100 flex gap-4">
+                    <span><strong>割引/特典:</strong> {selectedCoupon.discount}</span>
+                    <span><strong>マスタID:</strong> #{selectedCoupon.id}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3 mt-8">
               <button
                 onClick={handleCreateStep}
-                className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                disabled={!selectedCouponId}
+                className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <span>次へ</span>
+                <span>配布条件の設定へ</span>
                 <ArrowRight className="w-5 h-5" />
               </button>
             </div>
@@ -418,7 +379,7 @@ export function CouponDistribution() {
                 onClick={handleConditionsStep}
                 className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
               >
-                <span>次へ</span>
+                <span>確認画面へ</span>
                 <ArrowRight className="w-5 h-5" />
               </button>
             </div>
@@ -426,15 +387,15 @@ export function CouponDistribution() {
         )}
 
         {/* ステップ3: 配布確認画面 */}
-        {currentStep === 'confirm' && (
+        {currentStep === 'confirm' && selectedCoupon && (
           <div>
             <div className="flex items-center gap-3 mb-6">
               <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
                 <CheckCircle className="w-6 h-6 text-green-600" />
               </div>
               <div>
-                <h3 className="text-xl">配布確認</h3>
-                <p className="text-sm text-gray-600">以下の内容で配布を実行します</p>
+                <h3 className="text-xl">配布前の最終確認</h3>
+                <p className="text-sm text-gray-600">以下の内容で本番データベースへ一括配布を実行します</p>
               </div>
             </div>
 
@@ -442,33 +403,33 @@ export function CouponDistribution() {
               <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl p-6">
                 <h4 className="font-medium mb-4 flex items-center gap-2">
                   <Gift className="w-5 h-5 text-purple-600" />
-                  クーポン情報
+                  選択されたクーポン情報
                 </h4>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <p className="text-gray-600 mb-1">クーポン名</p>
-                    <p className="font-medium">{couponData.title}</p>
+                    <p className="text-gray-600 mb-1">クーポンマスタ名</p>
+                    <p className="font-bold text-gray-800">{selectedCoupon.title}</p>
                   </div>
                   <div>
-                    <p className="text-gray-600 mb-1">割引内容</p>
-                    <p className="font-medium text-purple-600">{couponData.discount}</p>
+                    <p className="text-gray-600 mb-1">割引・特典内容</p>
+                    <p className="font-bold text-purple-600">{selectedCoupon.discount}</p>
                   </div>
                   <div>
-                    <p className="text-gray-600 mb-1">店舗名</p>
-                    <p className="font-medium">{couponData.storeName}</p>
+                    <p className="text-gray-600 mb-1">マスタ管理ID</p>
+                    <p className="font-mono text-gray-700">#{selectedCoupon.id}</p>
                   </div>
                   <div>
-                    <p className="text-gray-600 mb-1">対象条件ランク</p>
+                    <p className="text-gray-600 mb-1">配布対象条件ランク</p>
                     <span 
-                      className="inline-block px-3 py-1 rounded text-white text-sm"
-                      style={{ backgroundColor: rankConfigs[couponData.requiredRank].color }}
+                      className="inline-block px-3 py-0.5 rounded text-white text-xs font-bold"
+                      style={{ backgroundColor: rankConfigs[selectedCoupon.required_rank]?.color || '#a855f7' }}
                     >
-                      {rankConfigs[couponData.requiredRank].name} 以上
+                      {rankConfigs[selectedCoupon.required_rank]?.name || selectedCoupon.required_rank} 以上
                     </span>
                   </div>
-                  <div className="col-span-2">
-                    <p className="text-gray-600 mb-1">説明</p>
-                    <p className="font-medium">{couponData.description}</p>
+                  <div className="col-span-2 pt-2 border-t border-purple-100/60">
+                    <p className="text-gray-600 mb-1">クーポン説明・利用条件</p>
+                    <p className="text-gray-700 text-xs leading-relaxed">{selectedCoupon.description}</p>
                   </div>
                 </div>
               </div>
@@ -476,23 +437,23 @@ export function CouponDistribution() {
               <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-xl p-6">
                 <h4 className="font-medium mb-4 flex items-center gap-2">
                   <Users className="w-5 h-5 text-blue-600" />
-                  配布対象
+                  配布対象ユーザー集計
                 </h4>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <p className="text-gray-600 mb-1">対象タイプ</p>
-                    <p className="font-medium">{couponData.requiredRank} ランク以上の会員</p>
+                    <p className="text-gray-600 mb-1">抽出条件</p>
+                    <p className="font-medium text-gray-800">{selectedCoupon.required_rank} ランク以上の全現役会員</p>
                   </div>
                   <div>
-                    <p className="text-gray-600 mb-1">対象人数（システム抽出）</p>
-                    <p className="font-medium text-blue-600 text-xl">{getTargetUserCount()}人目安</p>
+                    <p className="text-gray-600 mb-1">一括配布対象人数</p>
+                    <p className="font-bold text-blue-600 text-xl">{getTargetUserCount()} 人目安</p>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4">
-                <p className="text-sm text-red-800">
-                  <strong>⚠️ 注意：</strong> 配布を実行すると、データベースに即座に保存され、対象ランクのユーザーに配布されます。
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <p className="text-xs text-red-800 leading-relaxed">
+                  <strong>⚠️ 実行確認：</strong> 「配布を実行」ボタンを押すと、SQLiteの `UserCoupon` テーブルに対象ユーザー数分のレコードが即座にバルクインサートされます。配布後にユーザーはマイページから即時利用可能になります。
                 </p>
               </div>
             </div>
@@ -509,17 +470,17 @@ export function CouponDistribution() {
               <button
                 onClick={handleDistribute}
                 disabled={isDistributing}
-                className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isDistributing ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>配布・DB保存中...</span>
+                    <span>一括バルク配布中...</span>
                   </>
                 ) : (
                   <>
-                    <Send className="w-5 h-5" />
-                    <span>配布を実行（本番同期）</span>
+                    <Send className="w-4 h-4" />
+                    <span>本番データベースへ一括配布を実行</span>
                   </>
                 )}
               </button>
@@ -528,7 +489,7 @@ export function CouponDistribution() {
         )}
 
         {/* ステップ4: 配布完了画面 */}
-        {currentStep === 'complete' && (
+        {currentStep === 'complete' && selectedCoupon && (
           <div className="text-center py-12">
             <div className="mb-8 flex justify-center">
               <div className="w-24 h-24 bg-gradient-to-br from-green-400 to-emerald-600 rounded-full flex items-center justify-center shadow-2xl animate-bounce">
@@ -536,34 +497,34 @@ export function CouponDistribution() {
               </div>
             </div>
 
-            <h3 className="text-4xl mb-4 text-green-600">配布完了！</h3>
-            <p className="text-gray-600 mb-8">本物のデータベースへ正常に保存・配布が完了しました</p>
+            <h3 className="text-4xl mb-4 font-bold text-green-600">一括配布完了！</h3>
+            <p className="text-gray-600 mb-8">選択されたマスタクーポンが、SQLite本番データベースへ正常に配布同期されました</p>
 
             <div className="max-w-2xl mx-auto mb-8">
               <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-2xl p-8">
                 <div className="grid grid-cols-3 gap-6">
                   <div className="bg-white rounded-xl p-6 shadow-sm">
-                    <p className="text-sm text-gray-600 mb-2">実際の配布人数</p>
-                    <p className="text-4xl text-green-600 mb-1">{distributedCount}</p>
-                    <p className="text-xs text-gray-500">人</p>
+                    <p className="text-xs text-gray-500 mb-2 font-medium">実際のインサート件数</p>
+                    <p className="text-4xl font-bold text-green-600 mb-1">{distributedCount}</p>
+                    <p className="text-xs text-gray-400">名分のタイムライン</p>
                   </div>
-                  <div className="bg-white rounded-xl p-6 shadow-sm">
-                    <p className="text-sm text-gray-600 mb-2">クーポン名</p>
-                    <p className="text-lg text-gray-800 line-clamp-2">{couponData.title}</p>
+                  <div className="bg-white rounded-xl p-6 shadow-sm flex flex-col justify-center">
+                    <p className="text-xs text-gray-500 mb-2 font-medium">配布したクーポン</p>
+                    <p className="text-sm font-bold text-gray-800 line-clamp-2">{selectedCoupon.title}</p>
                   </div>
-                  <div className="bg-white rounded-xl p-6 shadow-sm">
-                    <p className="text-sm text-gray-600 mb-2">割引内容</p>
-                    <p className="text-2xl text-purple-600">{couponData.discount}</p>
+                  <div className="bg-white rounded-xl p-6 shadow-sm flex flex-col justify-center">
+                    <p className="text-xs text-gray-500 mb-2 font-medium">設定ランク</p>
+                    <p className="text-xl font-bold text-purple-600">{selectedCoupon.required_rank}以上</p>
                   </div>
                 </div>
 
                 <div className="mt-6 bg-white rounded-xl p-4 shadow-sm">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-gray-600">本番データ進捗</span>
-                    <span className="text-sm text-green-600">100%</span>
+                    <span className="text-xs text-gray-500 font-medium">バルクインサート同期ステータス</span>
+                    <span className="text-xs font-bold text-green-600">SUCCESS (100%)</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-3">
-                    <div className="bg-gradient-to-r from-green-500 to-emerald-500 h-3 rounded-full shadow-sm transition-all duration-1000" style={{ width: '100%' }}></div>
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div className="bg-gradient-to-r from-green-500 to-emerald-500 h-2.5 rounded-full shadow-sm" style={{ width: '100%' }}></div>
                   </div>
                 </div>
               </div>
@@ -572,15 +533,9 @@ export function CouponDistribution() {
             <div className="flex justify-center gap-4">
               <button
                 onClick={handleReset}
-                className="px-8 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors shadow-md"
+                className="px-6 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-colors shadow-md text-sm"
               >
-                新しいクーポンを配布
-              </button>
-              <button
-                onClick={() => window.location.reload()}
-                className="px-8 py-3 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
-              >
-                管理画面に戻る
+                続けて他のマスタを配布する
               </button>
             </div>
           </div>

@@ -42,12 +42,29 @@ export function CouponManagement() {
     fetchCoupons();
   }, []);
 
-  // 💡 クーポンの削除処理（本番化を見据えたUI側ロジック）
-  const handleDeleteCoupon = (couponId: number, title: string) => {
-    if (confirm(`クーポン「${title}」をマスタから削除しますか？\n※この操作は取り消せません。`)) {
-      // ひとまず画面上でのフィードバックと、削除成功の通知
-      toast.success('クーポンマスタから削除しました');
-      setCoupons(coupons.filter(c => c.id !== couponId));
+  // 💡 クーポンの削除処理（本番用のDELETE API連動に完全移行！）
+  const handleDeleteCoupon = async (couponId: number, title: string) => {
+    if (confirm(`クーポン「${title}」をマスタから削除しますか？\n※配布済みのユーザーの所持データからも消去されます。`)) {
+      try {
+        // 1. バックエンドの個別削除API（DELETE）を叩く
+        const response = await fetch(`http://localhost:5000/api/admin/coupons/${couponId}`, {
+          method: 'DELETE',
+        });
+
+        const resData = await response.json();
+
+        if (!response.ok) {
+          throw new Error(resData.error || 'マスタからの削除に失敗しました');
+        }
+
+        // 2. DBの削除が成功したら、フロントのStateからも除外して即時反映
+        toast.success(`クーポン「${title}」をDBから完全削除しました！`);
+        setCoupons(coupons.filter(c => c.id !== couponId));
+
+      } catch (error: any) {
+        console.error('Delete error:', error);
+        toast.error(error.message || '通信エラーが発生しました');
+      }
     }
   };
 

@@ -40,35 +40,27 @@ def get_dashboard_info(user_id):
 def use_coupon():
     """
     【コアロジック】クーポンの消込（使用）処理API (WBS 9.2.3)
-    入力された3桁の店舗コードがデータベースに存在するか照合し、クーポンを USED に変更します。
     """
     data = request.get_json()
     user_coupon_id = data.get('user_coupon_id')
-    shop_code = data.get('shop_code')  # フロントから飛んでくる3桁のコード (例: "001")
+    shop_code = data.get('shop_code')
 
-    # 1. 必須項目の入力バリデーション
     if not user_coupon_id or not shop_code:
         return jsonify({"error": "クーポンIDと店舗コードを入力してください"}), 400
 
-    # 2. 店舗コードがDBに実在するかチェック（実在照合ロジック）
     store = Store.query.filter_by(store_code=str(shop_code)).first()
     if not store:
         return jsonify({"error": "無効な店舗コードです。正しい3桁のコードを入力してください"}), 400
 
-    # 3. 対象の所持クーポンデータを取得
     user_coupon = UserCoupon.query.get(user_coupon_id)
     if not user_coupon:
         return jsonify({"error": "指定されたクーポンが見つかりません"}), 404
 
-    # 4. すでに使用済みになっていないかチェック
     if str(user_coupon.status).upper() == 'USED':
         return jsonify({"error": "このクーポンは既に使用済みです"}), 400
 
     try:
-        # 5. ステータスを使用済みに更新！
         user_coupon.status = 'USED'
-
-        # 6. 利用履歴（History）にもログを残す（仕様追加）
         coupon_title = user_coupon.coupon.title if user_coupon.coupon else "対象クーポン"
         history_log = History(
             user_id=user_coupon.user_id,
@@ -76,7 +68,6 @@ def use_coupon():
             description=f"店舗[{store.name}]にてクーポン「{coupon_title}」を使用しました。"
         )
         db.session.add(history_log)
-        
         db.session.commit()
 
         return jsonify({
@@ -90,39 +81,49 @@ def use_coupon():
         return jsonify({"error": f"クーポン処理中にエラーが発生しました: {str(e)}"}), 500
 
 
-# 💡 管理画面用の「クーポンマスタ管理API（作成・一覧取得）」
+# 管理画面用の「クーポンマスタ管理API（作成・一覧取得）」
 @coupons_bp.route('/api/admin/coupons', methods=['POST', 'GET'])
 def handle_admin_coupons():
-    # ----------------------------------------------------
-    # 【GET】登録済みのクーポンマスタを全件取得して返す処理を追記
-    # ----------------------------------------------------
     if request.method == 'GET':
         try:
             all_coupons = Coupon.query.all()
             coupon_list = []
             for c in all_coupons:
+                # 💡 フロントエンドが表示する際に、descriptionの先頭から【特典：〇〇】を抽出するロジック
+                desc_text = c.description if c.description else ""
+                discount_text = "特典"
+                
+                if desc_text.startswith("【特典：") and "】" in desc_text:
+                    parts = desc_text.split("】", 1)
+                    discount_text = parts[0].replace("【特典：", "")
+                    display_desc = parts[1].strip()
+                else:
+                    display_desc = desc_text
+
                 coupon_list.append({
                     "id": c.id,
                     "title": c.title,
-                    "description": c.description,
-                    "discount": getattr(c, 'discount', '特典'),
+                    "description": display_desc,
+                    "discount": discount_text, # 💡 フロントエンドへ安全に分離して渡す
                     "required_rank": c.required_rank if c.required_rank else 'BLUE'
                 })
             return jsonify(coupon_list), 200
         except Exception as e:
             return jsonify({"error": f"一覧取得エラー: {str(e)}"}), 500
 
-    # ----------------------------------------------------
-    # 【POST】これまでの新規作成ロジックをそのまま維持
-    # ----------------------------------------------------
     if request.method == 'POST':
         data = request.get_json()
         try:
+            raw_description = data.get('description', '')
+            discount_val = data.get('discount', '特典')
+            
+            # 💡 discountがモデルになくても大丈夫なように、description文字列の先頭に特典タグとして合体させる！
+            full_description = f"【特典：{discount_val}】\n{raw_description}"
+
             new_coupon = Coupon(
                 title=data.get('title'),
-                description=data.get('description'),
-                required_rank=data.get('required_rank', 'BLUE'),
-                discount=data.get('discount', '特典')  # discountも安全に保存
+                description=full_description, # 💡 合体テキストを流し込む
+                required_rank=data.get('required_rank', 'BLUE')
             )
             db.session.add(new_coupon)
             db.session.commit()
@@ -135,7 +136,30 @@ def handle_admin_coupons():
             return jsonify({"error": f"作成エラー: {str(e)}"}), 500
 
 
-# 💡 管理画面用の「クーポン一括配布API」
+# 管理画面用の「クーポンマスタ個別削除API」
+@coupons_bp.route('/api/admin/coupons/<int:coupon_id>', methods=['DELETE'])
+def delete_admin_coupon(coupon_id):
+    """
+    指定されたクーポンマスタをSQLiteから永久に削除するAPI
+    """
+    coupon = Coupon.query.get(coupon_id)
+    if not coupon:
+        return jsonify({"error": "指定されたクーポンマスタが見つかりません"}), 404
+        
+    try:
+        # 整合性を保つため、すでに配布済みのユーザーの所持データ（UserCoupon）も同時に削除
+        UserCoupon.query.filter_by(coupon_id=coupon_id).delete()
+        
+        # マスタ自体を削除
+        db.session.delete(coupon)
+        db.session.commit()
+        return jsonify({"success": True, "message": f"クーポン「{coupon.title}」をDBから完全削除しました"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"削除エラー: {str(e)}"}), 500
+
+
+# 管理画面用の「クーポン一括配布API」
 @coupons_bp.route('/api/admin/coupons/distribute', methods=['POST'])
 def distribute_admin_coupon():
     data = request.get_json()
@@ -159,7 +183,7 @@ def distribute_admin_coupon():
             if not exists:
                 user_coupon = UserCoupon(
                     user_id=user.id,
-                    coupon_id=coupon_id,
+                    coupon_id=int(coupon_id), 
                     status='UNUSED'
                 )
                 db.session.add(user_coupon)
@@ -175,7 +199,7 @@ def distribute_admin_coupon():
         return jsonify({"error": f"配布エラー: {str(e)}"}), 500
     
 
-# 💡 管理者用の会員一覧取得API
+# 会員一覧取得API
 @coupons_bp.route('/api/admin/members', methods=['GET'])
 def get_admin_members():
     try:
@@ -208,7 +232,7 @@ def get_admin_members():
         return jsonify({"error": f"会員一覧の取得に失敗しました: {str(e)}"}), 500
     
 
-# 💡 管理者用の分析データ取得API（デバッグ＆超安全ガード版）
+# 分析データ取得API
 @coupons_bp.route('/api/admin/analytics', methods=['GET'])
 def get_admin_analytics():
     try:
@@ -233,9 +257,17 @@ def get_admin_analytics():
             user = ur.user
             
             coupon_title = coupon.title if coupon else "テスト用クーポン"
-            discount_text = coupon.discount if coupon and hasattr(coupon, 'discount') else "特典"
+            
+            # 分析画面用にも同様のフォールバックを適用
+            desc_text = coupon.description if coupon and coupon.description else ""
+            discount_text = "特典"
+            if desc_text.startswith("【特典：") and "】" in desc_text:
+                discount_text = desc_text.split("】", 1)[0].replace("【特典：", "")
+            elif coupon and hasattr(coupon, 'discount') and coupon.discount:
+                discount_text = coupon.discount
+
             user_name = user.username if user else f"会員_{ur.user_id}"
-            user_rank = user.rank if user else "BLUE"
+            user_rank = user.user.rank if user and hasattr(user, 'rank') else "BLUE"
 
             store_name = "全店舗共通"
             store_id = "1"

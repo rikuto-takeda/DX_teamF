@@ -1,3 +1,4 @@
+// AdminDashboard.tsx
 import { useState } from 'react';
 import { UsageRecord } from '../../App';
 import { CouponManagement } from './CouponManagement';
@@ -5,6 +6,7 @@ import { StoreManagement } from './StoreManagement';
 import { UsageAnalytics } from './UsageAnalytics';
 import { CouponDistribution } from './CouponDistribution';
 import { MemberManagement } from './MemberManagement';
+import { CouponCreateForm } from './CouponCreateForm'; // 💡 新規作成フォームをインポート
 import { LogOut, Gift, Store, BarChart3, Send, Users } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -104,7 +106,11 @@ export function AdminDashboard({ usageRecords, onLogout }: AdminDashboardProps) 
           <MemberManagement usageRecords={usageRecords} />
         )}
         {activeTab === 'coupons' && (
-          <CouponManagement />
+          <div className="space-y-8">
+            {/* 💡 クーポン作成フォームを上部に配置し、既存の一覧（Management）を下部に並べる構造に最適化 */}
+            <CouponCreateForm />
+            <CouponManagement />
+          </div>
         )}
         {activeTab === 'distribution' && (
           <CouponDistribution />

@@ -90,25 +90,49 @@ def use_coupon():
         return jsonify({"error": f"クーポン処理中にエラーが発生しました: {str(e)}"}), 500
 
 
-# 💡 管理画面用の「クーポン新規作成API」
-@coupons_bp.route('/api/admin/coupons', methods=['POST'])
-def create_admin_coupon():
-    data = request.get_json()
-    try:
-        new_coupon = Coupon(
-            title=data.get('title'),
-            description=data.get('description'),
-            required_rank=data.get('required_rank', 'BLUE')
-        )
-        db.session.add(new_coupon)
-        db.session.commit()
-        return jsonify({
-            "message": "クーポンマスタを作成しました",
-            "coupon": {"id": new_coupon.id, "title": new_coupon.title}
-        }), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": f"作成エラー: {str(e)}"}), 500
+# 💡 管理画面用の「クーポンマスタ管理API（作成・一覧取得）」
+@coupons_bp.route('/api/admin/coupons', methods=['POST', 'GET'])
+def handle_admin_coupons():
+    # ----------------------------------------------------
+    # 【GET】登録済みのクーポンマスタを全件取得して返す処理を追記
+    # ----------------------------------------------------
+    if request.method == 'GET':
+        try:
+            all_coupons = Coupon.query.all()
+            coupon_list = []
+            for c in all_coupons:
+                coupon_list.append({
+                    "id": c.id,
+                    "title": c.title,
+                    "description": c.description,
+                    "discount": getattr(c, 'discount', '特典'),
+                    "required_rank": c.required_rank if c.required_rank else 'BLUE'
+                })
+            return jsonify(coupon_list), 200
+        except Exception as e:
+            return jsonify({"error": f"一覧取得エラー: {str(e)}"}), 500
+
+    # ----------------------------------------------------
+    # 【POST】これまでの新規作成ロジックをそのまま維持
+    # ----------------------------------------------------
+    if request.method == 'POST':
+        data = request.get_json()
+        try:
+            new_coupon = Coupon(
+                title=data.get('title'),
+                description=data.get('description'),
+                required_rank=data.get('required_rank', 'BLUE'),
+                discount=data.get('discount', '特典')  # discountも安全に保存
+            )
+            db.session.add(new_coupon)
+            db.session.commit()
+            return jsonify({
+                "message": "クーポンマスタを作成しました",
+                "coupon": {"id": new_coupon.id, "title": new_coupon.title}
+            }), 201
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": f"作成エラー: {str(e)}"}), 500
 
 
 # 💡 管理画面用の「クーポン一括配布API」

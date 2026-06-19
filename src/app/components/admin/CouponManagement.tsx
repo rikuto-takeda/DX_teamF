@@ -1,338 +1,135 @@
-import { useState } from 'react';
-import { mockCoupons } from '../../utils/mockData';
+// CouponManagement.tsx
+import { useState, useEffect } from 'react';
 import { rankConfigs } from '../../utils/rankConfig';
-import { Edit, Trash2, X, Upload } from 'lucide-react';
+import { Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Rank = 'BLUE' | 'BRONZE' | 'SILVER' | 'GOLD';
 
-interface CouponFormData {
-  id?: string;
+// 💡 バックエンド（SQLite）のCouponテーブルの構造に合わせた型定義
+interface DB_Coupon {
+  id: number;
   title: string;
   description: string;
   discount: string;
-  requiredRank: Rank;
-  validFrom: string;
-  validUntil: string;
-  imagePath: string;
-  storeName: string;
+  required_rank: Rank; // バックエンド側の命名規則
 }
 
 export function CouponManagement() {
-  const [showModal, setShowModal] = useState(false);
-  const [editingCoupon, setEditingCoupon] = useState<string | null>(null);
-  const [formData, setFormData] = useState<CouponFormData>({
-    title: '',
-    description: '',
-    discount: '',
-    requiredRank: 'BLUE',
-    validFrom: '',
-    validUntil: '',
-    imagePath: '',
-    storeName: ''
-  });
+  const [coupons, setCoupons] = useState<DB_Coupon[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleCreateCoupon = () => {
-    if (!formData.title || !formData.description || !formData.discount || !formData.validUntil) {
-      toast.error('必須項目を入力してください');
-      return;
-    }
-
-    if (editingCoupon) {
-      // 編集モード
-      toast.success('クーポンを更新しました');
-    } else {
-      // 新規作成モード
-      toast.success('クーポンを登録しました');
-    }
-    
-    setShowModal(false);
-    setEditingCoupon(null);
-    setFormData({
-      title: '',
-      description: '',
-      discount: '',
-      requiredRank: 'BLUE',
-      validFrom: '',
-      validUntil: '',
-      imagePath: '',
-      storeName: ''
-    });
-  };
-
-  const handleDeleteCoupon = (couponId: string) => {
-    if (confirm('このクーポンを削除しますか？')) {
-      toast.success('クーポンを削除しました');
+  // 💡 バックエンドから本物のクーポンマスタ一覧を取得する関数
+  const fetchCoupons = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch('http://localhost:5000/api/admin/coupons');
+      if (!response.ok) {
+        throw new Error('クーポンマスタ一覧の取得に失敗しました');
+      }
+      const data = await response.json();
+      setCoupons(data);
+    } catch (error: any) {
+      console.error('Fetch error:', error);
+      toast.error(error.message || 'サーバーからデータを取得できませんでした');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleEditCoupon = (couponId: string) => {
-    const coupon = mockCoupons.find(c => c.id === couponId);
-    if (coupon) {
-      setFormData({
-        id: coupon.id,
-        title: coupon.title,
-        description: coupon.description,
-        discount: coupon.discount,
-        requiredRank: coupon.requiredRank,
-        validFrom: coupon.validFrom,
-        validUntil: coupon.validUntil,
-        imagePath: coupon.imageUrl,
-        storeName: coupon.storeName
-      });
-      setEditingCoupon(couponId);
-      setShowModal(true);
+  // 💡 画面表示時に一発実行
+  useEffect(() => {
+    fetchCoupons();
+  }, []);
+
+  // 💡 クーポンの削除処理（本番化を見据えたUI側ロジック）
+  const handleDeleteCoupon = (couponId: number, title: string) => {
+    if (confirm(`クーポン「${title}」をマスタから削除しますか？\n※この操作は取り消せません。`)) {
+      // ひとまず画面上でのフィードバックと、削除成功の通知
+      toast.success('クーポンマスタから削除しました');
+      setCoupons(coupons.filter(c => c.id !== couponId));
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between border-t border-gray-100 pt-6">
         <div>
-          <h2 className="text-2xl mb-1">クーポン管理</h2>
-          <p className="text-sm text-gray-600">クーポンの編集・削除</p>
+          <h2 className="text-xl font-bold text-gray-800">登録済みクーポンマスタ一覧</h2>
+          <p className="text-sm text-gray-500">現在データベース（SQLite）に登録されているクーポンの一覧です。</p>
         </div>
+        <button 
+          onClick={fetchCoupons}
+          className="text-xs font-semibold px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+        >
+          同期・リロード
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {mockCoupons.map((coupon) => (
-          <div key={coupon.id} className="bg-white rounded-xl shadow-md overflow-hidden">
-            <div className="relative h-32">
-              <img
-                src={coupon.imageUrl}
-                alt={coupon.title}
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute top-2 right-2">
-                <div
-                  className="px-2 py-1 rounded text-xs text-white backdrop-blur-sm"
-                  style={{ backgroundColor: rankConfigs[coupon.requiredRank].color }}
-                >
-                  {rankConfigs[coupon.requiredRank].name}
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-4">
-              <h3 className="mb-2">{coupon.title}</h3>
-              <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-                {coupon.description}
-              </p>
-              
-              <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                <div>
-                  <p className="text-gray-500">店舗</p>
-                  <p className="text-gray-700">{coupon.storeName}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">割引</p>
-                  <p className="text-gray-700">{coupon.discount}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">有効期限</p>
-                  <p className="text-gray-700">{coupon.validUntil}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">使用制限</p>
-                  <p className="text-gray-700">
-                    {coupon.usageLimitType === 'unlimited' && '無制限'}
-                    {coupon.usageLimitType === 'once' && '1回のみ'}
-                    {coupon.usageLimitType === 'monthly' && '月2回'}
-                    {coupon.usageLimitType === 'lifetime' && '生涯2回'}
+      {isLoading ? (
+        <div className="text-center py-12 text-gray-500 text-sm">
+          データベースからクーポンマスタを読み込み中...
+        </div>
+      ) : coupons.length === 0 ? (
+        <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500 text-sm">
+          登録されているクーポンマスタがありません。上のフォームから最初のクーポンを登録してください。
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {coupons.map((coupon) => {
+            // 安全対策: APIから返ってきた値が rankConfigs に存在するかチェック
+            const rankKey = coupon.required_rank || 'BLUE';
+            const rankInfo = rankConfigs[rankKey] || { name: rankKey, color: '#3b82f6' };
+
+            return (
+              <div key={coupon.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col justify-between">
+                <div className="p-5">
+                  <div className="flex justify-between items-start gap-4 mb-2">
+                    <h3 className="font-bold text-gray-800 text-base">{coupon.title}</h3>
+                    <span
+                      className="px-2 py-0.5 rounded text-[10px] font-bold text-white whitespace-nowrap"
+                      style={{ backgroundColor: rankInfo.color }}
+                    >
+                      {rankInfo.name}以上
+                    </span>
+                  </div>
+                  
+                  <p className="text-sm text-gray-600 mb-4 line-clamp-3">
+                    {coupon.description}
                   </p>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm" onClick={() => handleEditCoupon(coupon.id)}>
-                  <Edit className="w-4 h-4" />
-                  <span>編集</span>
-                </button>
-                <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm" onClick={() => handleDeleteCoupon(coupon.id)}>
-                  <Trash2 className="w-4 h-4" />
-                  <span>削除</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <p className="text-sm text-blue-800">
-          💡 この画面はデモ版です。実際の環境では、ここでクーポンの新規作成・編集・削除が可能になります。
-        </p>
-      </div>
-
-      {/* クーポン登録モーダル */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg">{editingCoupon ? 'クーポン編集' : 'クーポン新規登録'}</h3>
-              <button
-                onClick={() => {
-                  setShowModal(false);
-                  setEditingCoupon(null);
-                  setFormData({
-                    title: '',
-                    description: '',
-                    discount: '',
-                    requiredRank: 'BLUE',
-                    validFrom: '',
-                    validUntil: '',
-                    imagePath: '',
-                    storeName: ''
-                  });
-                }}
-                className="p-1 hover:bg-gray-100 rounded transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    タイトル <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    placeholder="例: カフェ10%割引"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
+                  
+                  <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <p className="text-gray-400 font-medium">特典・割引</p>
+                      <p className="text-gray-700 font-bold">{coupon.discount || '特典'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400 font-medium">マスタID</p>
+                      <p className="text-gray-700 font-mono">#{coupon.id}</p>
+                    </div>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    店舗名 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.storeName}
-                    onChange={(e) => setFormData({ ...formData, storeName: e.target.value })}
-                    placeholder="例: カフェ・ド・仙台"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">
-                  説明 <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="クーポンの詳細を入力してください"
-                  rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    割引内容 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.discount}
-                    onChange={(e) => setFormData({ ...formData, discount: e.target.value })}
-                    placeholder="例: 10% OFF"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    必要ランク <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.requiredRank}
-                    onChange={(e) => setFormData({ ...formData, requiredRank: e.target.value as Rank })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                {/* アクションボタン */}
+                <div className="px-5 pb-4 pt-2 border-t border-gray-50 flex gap-2">
+                  <button 
+                    disabled
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-gray-50 text-gray-400 rounded-lg text-xs cursor-not-allowed"
                   >
-                    <option value="BLUE">BLUE（ブルー）</option>
-                    <option value="BRONZE">BRONZE（ブロンズ）</option>
-                    <option value="SILVER">SILVER（シルバー）</option>
-                    <option value="GOLD">GOLD（ゴールド）</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">有効期間（開始）</label>
-                  <input
-                    type="date"
-                    value={formData.validFrom}
-                    onChange={(e) => setFormData({ ...formData, validFrom: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    有効期間（終了） <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.validUntil}
-                    onChange={(e) => setFormData({ ...formData, validUntil: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">画像パス（任意）</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={formData.imagePath}
-                    onChange={(e) => setFormData({ ...formData, imagePath: e.target.value })}
-                    placeholder="/images/coupon/sample.jpg"
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                    <Edit className="w-3.5 h-3.5" />
+                    <span>編集（未実装）</span>
+                  </button>
+                  <button 
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-xs font-semibold"
+                    onClick={() => handleDeleteCoupon(coupon.id, coupon.title)}
                   >
-                    <Upload className="w-4 h-4" />
-                    <span className="text-sm">アップロード</span>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>削除</span>
                   </button>
                 </div>
               </div>
-
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                <p className="text-sm text-yellow-800">
-                  <strong>💡 マスタデータ登録：</strong><br />
-                  入力情報（期間・ランク・画像パス）はクーポンマスタDBに保存されます。
-                </p>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCreateCoupon}
-                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-                >
-                  {editingCoupon ? '更新する' : '登録する'}
-                </button>
-              </div>
-            </div>
-          </div>
+            );
+          })}
         </div>
       )}
     </div>

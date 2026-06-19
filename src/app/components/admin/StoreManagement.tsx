@@ -1,11 +1,11 @@
-import { useState } from 'react';
-import { mockStores } from '../../utils/mockData';
+// StoreManagement.tsx
+import { useState, useEffect } from 'react';
 import { Trash2, Plus, Copy, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { StoreRegistrationComplete } from './StoreRegistrationComplete';
 
 interface Store {
-  id: string;
+  id: number; // バックエンドの主キー（数値型）に合わせる
   name: string;
   code: string;
   status: 'active' | 'inactive';
@@ -14,14 +14,8 @@ interface Store {
 }
 
 export function StoreManagement() {
-  const [stores, setStores] = useState<Store[]>(
-    mockStores.map(store => ({
-      ...store,
-      status: 'active' as const,
-      loginId: `store_${store.code}`,
-      createdAt: new Date().toISOString()
-    }))
-  );
+  const [stores, setStores] = useState<Store[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showCompleteScreen, setShowCompleteScreen] = useState(false);
   const [completedStore, setCompletedStore] = useState<{
@@ -34,6 +28,40 @@ export function StoreManagement() {
     name: '',
     category: ''
   });
+
+  // 💡 バックエンドから店舗一覧を同期・取得する関数
+  const fetchStores = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch('http://localhost:5000/api/admin/stores');
+      if (!response.ok) {
+        throw new Error('店舗一覧の取得に失敗しました');
+      }
+      const data = await response.json();
+      
+      // バックエンドのスキーマ構造をフロント側のプロパティ名にマッピング
+      const formattedStores: Store[] = data.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        code: s.store_code, // バックエンド側のカラム名
+        status: 'active',
+        loginId: s.login_id || `store_${s.store_code}`,
+        createdAt: s.created_at || new Date().toISOString()
+      }));
+      
+      setStores(formattedStores);
+    } catch (error: any) {
+      print('Fetch stores error:', error);
+      toast.error(error.message || 'サーバーから店舗データを取得できませんでした');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 💡 初回レンダリング時に実データを取得
+  useEffect(() => {
+    fetchStores();
+  }, []);
 
   // 3桁の店舗コードを自動生成
   const generateStoreCode = () => {
@@ -52,8 +80,8 @@ export function StoreManagement() {
     return { loginId, password };
   };
 
-  // 新規店舗登録
-  const handleAddStore = () => {
+  // 💡 新規店舗登録（バックエンド API 連携版）
+  const handleAddStore = async () => {
     if (!newStore.name.trim()) {
       toast.error('店舗名を入力してください');
       return;
@@ -62,34 +90,70 @@ export function StoreManagement() {
     const storeCode = generateStoreCode();
     const { loginId, password } = generateCredentials(storeCode);
     
-    const store: Store = {
-      id: `store_${Date.now()}`,
-      name: newStore.name,
-      code: storeCode,
-      status: 'active',
-      loginId,
-      createdAt: new Date().toISOString()
-    };
+    try {
+      // バックエンドの店舗作成APIを叩く
+      const response = await fetch('http://localhost:5000/api/admin/stores', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newStore.name,
+          store_code: storeCode,
+          login_id: loginId,
+          password: password // バックエンド側で保存・ハッシュ化等を想定
+        }),
+      });
 
-    setStores([...stores, store]);
-    toast.success(`店舗を登録しました\nログインID: ${loginId}\nパスワード: ${password}`);
-    
-    setShowAddModal(false);
-    setNewStore({ name: '', category: '' });
-    setCompletedStore({ name: newStore.name, code: storeCode, loginId, password });
-    setShowCompleteScreen(true);
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || '店舗のDB登録に失敗しました');
+      }
+
+      toast.success(`店舗「${newStore.name}」をデータベースに登録しました！`);
+      
+      // 登録成功したらモーダルを閉じて画面をリロード
+      setShowAddModal(false);
+      setNewStore({ name: '', category: '' });
+      setCompletedStore({ name: newStore.name, code: storeCode, loginId, password });
+      setShowCompleteScreen(true);
+      
+      // 最新のリストに更新
+      fetchStores();
+
+    } catch (error: any) {
+      console.error('Add store error:', error);
+      toast.error(error.message || '通信エラーが発生しました');
+    }
   };
 
-  // 店舗削除
-  const handleDeleteStore = (storeId: string) => {
-    if (confirm('この店舗を削除しますか？')) {
-      setStores(stores.filter(store => store.id !== storeId));
-      toast.success('店舗を削除しました');
+  // 💡 店舗削除（バックエンド API 連携版）
+  const handleDeleteStore = async (storeId: number, storeName: string) => {
+    if (confirm(`店舗「${storeName}」をシステムから完全に削除しますか？\n※この店舗に紐づくデータが消去される可能性があります。`)) {
+      try {
+        const response = await fetch(`http://localhost:5000/api/admin/stores/${storeId}`, {
+          method: 'DELETE',
+        });
+
+        const resData = await response.json();
+
+        if (!response.ok) {
+          throw new Error(resData.error || '店舗の削除に失敗しました');
+        }
+
+        toast.success('データベースから店舗を削除しました');
+        // フロントのStateからも即時除外
+        setStores(stores.filter(store => store.id !== storeId));
+
+      } catch (error: any) {
+        console.error('Delete store error:', error);
+        toast.error(error.message || '削除処理中にエラーが発生しました');
+      }
     }
   };
 
   const copyCode = (code: string) => {
-    // フォールバック付きのコピー機能
     const fallbackCopy = (text: string) => {
       const textArea = document.createElement('textarea');
       textArea.value = text;
@@ -106,7 +170,6 @@ export function StoreManagement() {
       document.body.removeChild(textArea);
     };
 
-    // Clipboard APIを試行し、失敗したらフォールバック
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(code)
         .then(() => {
@@ -125,59 +188,77 @@ export function StoreManagement() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl mb-1">店舗管理</h2>
-          <p className="text-sm text-gray-600">提携店舗の登録・店舗コード管理</p>
+          <p className="text-sm text-gray-600">提携店舗の登録・店舗コード管理（SQLite同期済み）</p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          <span>店舗登録</span>
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={fetchStores}
+            className="text-xs font-semibold px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+          >
+            同期・リロード
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>店舗登録</span>
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-md overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-sm text-gray-600">店舗名</th>
-              <th className="px-6 py-3 text-left text-sm text-gray-600">店舗コード</th>
-              <th className="px-6 py-3 text-left text-sm text-gray-600">ログインID</th>
-              <th className="px-6 py-3 text-right text-sm text-gray-600">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stores.map((store, index) => (
-              <tr key={store.id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                <td className="px-6 py-4 text-sm">{store.name}</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-lg text-purple-600">{store.code}</span>
-                    <button
-                      onClick={() => copyCode(store.code)}
-                      className="p-1 hover:bg-gray-200 rounded transition-colors"
-                      title="コピー"
-                    >
-                      <Copy className="w-4 h-4 text-gray-500" />
-                    </button>
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-600 font-mono">{store.loginId}</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => handleDeleteStore(store.id)}
-                      className="p-2 hover:bg-red-50 text-red-600 rounded transition-colors"
-                      title="削除"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </td>
+        {isLoading ? (
+          <div className="text-center py-12 text-gray-500 text-sm">
+            データベースから店舗マスタを読み込み中...
+          </div>
+        ) : stores.length === 0 ? (
+          <div className="text-center py-12 text-gray-500 text-sm">
+            登録されている店舗がありません。「店舗登録」ボタンから追加してください。
+          </div>
+        ) : (
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-sm text-gray-600">店舗名</th>
+                <th className="px-6 py-3 text-left text-sm text-gray-600">店舗コード</th>
+                <th className="px-6 py-3 text-left text-sm text-gray-600">ログインID</th>
+                <th className="px-6 py-3 text-right text-sm text-gray-600">操作</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {stores.map((store, index) => (
+                <tr key={store.id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                  <td className="px-6 py-4 text-sm font-medium text-gray-800">{store.name}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-lg text-purple-600">{store.code}</span>
+                      <button
+                        onClick={() => copyCode(store.code)}
+                        className="p-1 hover:bg-gray-200 rounded transition-colors"
+                        title="コピー"
+                      >
+                        <Copy className="w-4 h-4 text-gray-500" />
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-600 font-mono">{store.loginId}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => handleDeleteStore(store.id, store.name)}
+                        className="p-2 hover:bg-red-50 text-red-600 rounded transition-colors"
+                        title="削除"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -6,7 +6,8 @@ from models import db, User, Admin
 from auth import auth_bp
 from points import points_bp    # ポイント・ランク判定用のBlueprint (WBS 8.4)
 from coupons import coupons_bp   # クーポン・マイページ情報用のBlueprint (WBS 9.2.2)
-from admin_management import admin_mgmt_bp  # 💡追加：管理者機能用のBlueprint
+from admin_management import admin_mgmt_bp  # 管理者機能用のBlueprint
+from stores import stores_bp  # 💡ここにインポートを配置
 
 def create_app():
     app = Flask(__name__)
@@ -23,10 +24,12 @@ def create_app():
     db.init_app(app)
 
     # 4. Blueprint（各種API）の登録
+    # 💡 【重要】競合する古いモック処理(admin_mgmt_bp)に横取りされないよう、stores_bpを最優先で一番上に登録！
+    app.register_blueprint(stores_bp)   
     app.register_blueprint(auth_bp)     # 認証関係（ログイン・新規登録）
     app.register_blueprint(points_bp)   # ランク自動判定・ポイント関係
     app.register_blueprint(coupons_bp)  # クーポン・マイページ情報関係
-    app.register_blueprint(admin_mgmt_bp)  # 💡追加：管理者向け店舗管理機能関係
+    app.register_blueprint(admin_mgmt_bp)  # 管理者向けその他機能関係
 
     # 5. アプリ起動時に初期デモデータを投入する（テーブルがなければ作成）
     with app.app_context():

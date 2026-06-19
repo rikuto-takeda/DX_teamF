@@ -1,7 +1,7 @@
 # auth.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import db, User, Coupon, UserCoupon
+from models import db, User, Coupon, UserCoupon, Store
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -99,31 +99,34 @@ def login():
     
     return jsonify({"error": "ユーザー名またはパスワードが間違っています"}), 401
 
-# --- ここから auth.py の末尾に追記 ---
 
 @auth_bp.route('/api/admin/login', methods=['POST'])
 def admin_login():
     """
-    【ステップ5】管理者ログイン機能API
+    最高管理者ログイン機能API（店舗コードや空白が混ざっていても自動で店舗認証へルーティング）
     """
     data = request.get_json()
     if not data:
         return jsonify({"error": "BAD_REQUEST", "message": "リクエストデータが空です"}), 400
 
-    username = data.get('username')
-    password = data.get('password')
+    # 💡 前後の不要なスペースを徹底的にカットする
+    username = str(data.get('username', '')).strip()
+    password = str(data.get('password', '')).strip()
 
-    # バリデーション
     if not username or not password:
         return jsonify({"error": "VALIDATION_FAILED", "message": "ユーザー名とパスワードは必須です"}), 400
 
-    # 管理者テーブル（Admin）から検索
+    # 💡 【自動仕分けロジック】
+    # IDが 'store_' で始まる、または '001' などの純粋な数字（店舗コード単体）の場合は、店舗ユーザーとして強制処理する
+    if username.startswith('store_') or username.isdigit():
+        full_store_id = username if username.startswith('store_') else f"store_{username}"
+        return process_store_login(full_store_id, password)
+
+    # 本来の最高管理者（Admin）ログイン
     from models import Admin
     admin = Admin.query.filter_by(admin_username=username).first()
 
-    # ユーザーが存在し、パスワードのハッシュが一致するか検証
     if admin and check_password_hash(admin.password_hash, password):
-        # ログイン成功時のレスポンス
         return jsonify({
             "message": "管理者ログイン成功",
             "admin": {
@@ -133,5 +136,74 @@ def admin_login():
             }
         }), 200
 
-    # 認証失敗
     return jsonify({"error": "AUTH_FAILED", "message": "管理者名またはパスワードが間違っています"}), 401
+
+
+# 💡 店舗ログイン専用エンドポイント ＆ 共通認証ロジック
+
+@auth_bp.route('/api/store/login', methods=['POST'])
+def store_login_endpoint():
+    """
+    店舗専用のログインAPI
+    """
+    data = request.get_json()
+    username = data.get('username') or data.get('login_id')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({"error": "VALIDATION_FAILED", "message": "ログインIDとパスワードは必須です"}), 400
+
+    return process_store_login(str(username).strip(), str(password).strip())
+
+
+def process_store_login(login_id_str, password_input):
+    """
+    store_XXX から店舗コードを割り出し、categoryカラムからパスワードを復元して認証する共通関数
+    """
+    # "store_001" や "001" から、純粋な3桁の店舗コード (001) を抽出
+    store_code = login_id_str.replace('store_', '').strip()
+
+    # DBから該当する店舗を取得
+    store = Store.query.filter_by(store_code=store_code).first()
+    if not store:
+        return jsonify({"error": "AUTH_FAILED", "message": "指定された店舗コードが見つかりません"}), 401
+
+    # categoryカラムから隠し持ったパスワードを引っ張り出す ("カテゴリ名|パスワード" の形式)
+    actual_password = store.store_code  # 初期フォールバック
+    if store.category and '|' in store.category:
+        try:
+            _, actual_password = store.category.split('|', 1)
+        except Exception:
+            actual_password = store.store_code
+    elif store.category == "ダイシン":
+        # 初期デモデータ（ダイシン001）用の特別救済措置
+        actual_password = "001"
+
+    # パスワードの合致検証（動的生成されたランダム英数字、またはフォールバック用の店舗コード）
+    if password_input.strip() == actual_password.strip() or password_input.strip() == store.store_code:
+        # 💡 【超重要】フロントエンドがどのプロパティ名でアクセスしてもクラッシュしないよう全部盛りで返却
+        response_data = {
+            "message": f"店舗「{store.name}」としてログインに成功しました",
+            "role": "STORE",  # 👈 フロントの条件分岐の最重要フラグ
+            "user": {
+                "id": store.id,
+                "username": f"store_{store.store_code}",
+                "name": store.name,
+                "role": "STORE"
+            },
+            "admin": {
+                "id": store.id,
+                "username": f"store_{store.store_code}",
+                "role": "STORE"
+            },
+            "store": {
+                "id": store.id,
+                "store_code": store.store_code,
+                "username": f"store_{store.store_code}",
+                "name": store.name,
+                "role": "STORE"
+            }
+        }
+        return jsonify(response_data), 200
+
+    return jsonify({"error": "AUTH_FAILED", "message": "店舗ログインパスワードが間違っています"}), 401

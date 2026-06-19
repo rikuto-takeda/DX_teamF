@@ -89,7 +89,6 @@ def handle_admin_coupons():
             all_coupons = Coupon.query.all()
             coupon_list = []
             for c in all_coupons:
-                # 💡 フロントエンドが表示する際に、descriptionの先頭から【特典：〇〇】を抽出するロジック
                 desc_text = c.description if c.description else ""
                 discount_text = "特典"
                 
@@ -104,7 +103,7 @@ def handle_admin_coupons():
                     "id": c.id,
                     "title": c.title,
                     "description": display_desc,
-                    "discount": discount_text, # 💡 フロントエンドへ安全に分離して渡す
+                    "discount": discount_text,
                     "required_rank": c.required_rank if c.required_rank else 'BLUE'
                 })
             return jsonify(coupon_list), 200
@@ -116,13 +115,11 @@ def handle_admin_coupons():
         try:
             raw_description = data.get('description', '')
             discount_val = data.get('discount', '特典')
-            
-            # 💡 discountがモデルになくても大丈夫なように、description文字列の先頭に特典タグとして合体させる！
             full_description = f"【特典：{discount_val}】\n{raw_description}"
 
             new_coupon = Coupon(
                 title=data.get('title'),
-                description=full_description, # 💡 合体テキストを流し込む
+                description=full_description,
                 required_rank=data.get('required_rank', 'BLUE')
             )
             db.session.add(new_coupon)
@@ -139,18 +136,12 @@ def handle_admin_coupons():
 # 管理画面用の「クーポンマスタ個別削除API」
 @coupons_bp.route('/api/admin/coupons/<int:coupon_id>', methods=['DELETE'])
 def delete_admin_coupon(coupon_id):
-    """
-    指定されたクーポンマスタをSQLiteから永久に削除するAPI
-    """
     coupon = Coupon.query.get(coupon_id)
     if not coupon:
         return jsonify({"error": "指定されたクーポンマスタが見つかりません"}), 404
         
     try:
-        # 整合性を保つため、すでに配布済みのユーザーの所持データ（UserCoupon）も同時に削除
         UserCoupon.query.filter_by(coupon_id=coupon_id).delete()
-        
-        # マスタ自体を削除
         db.session.delete(coupon)
         db.session.commit()
         return jsonify({"success": True, "message": f"クーポン「{coupon.title}」をDBから完全削除しました"}), 200
@@ -240,10 +231,6 @@ def get_admin_analytics():
         
         all_count = UserCoupon.query.count()
         used_count = UserCoupon.query.filter_by(status='USED').count()
-        print("\n========================================")
-        print(f"🔥 [DEBUG] DB内のUserCoupon総件数: {all_count}件")
-        print(f"🔥 [DEBUG] status='USED' の件数: {used_count}件")
-        print("========================================\n")
         
         all_records = UserCoupon.query.all()
         parsed_records = []
@@ -255,10 +242,8 @@ def get_admin_analytics():
                 
             coupon = ur.coupon
             user = ur.user
-            
             coupon_title = coupon.title if coupon else "テスト用クーポン"
             
-            # 分析画面用にも同様のフォールバックを適用
             desc_text = coupon.description if coupon and coupon.description else ""
             discount_text = "特典"
             if desc_text.startswith("【特典：") and "】" in desc_text:
@@ -267,7 +252,9 @@ def get_admin_analytics():
                 discount_text = coupon.discount
 
             user_name = user.username if user else f"会員_{ur.user_id}"
-            user_rank = user.user.rank if user and hasattr(user, 'rank') else "BLUE"
+            
+            # 💡 【バグ修正完了】user.user.rank の重複タイポを解消！
+            user_rank = user.rank if user and hasattr(user, 'rank') else "BLUE"
 
             store_name = "全店舗共通"
             store_id = "1"

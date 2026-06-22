@@ -81,12 +81,24 @@ def use_coupon():
         return jsonify({"error": f"クーポン処理中にエラーが発生しました: {str(e)}"}), 500
 
 
-# 管理画面用の「クーポンマスタ管理API（作成・一覧取得）」
+# 🌟 管理画面用：クーポンマスタ管理API（作成・一覧取得）
 @coupons_bp.route('/api/admin/coupons', methods=['POST', 'GET'])
 def handle_admin_coupons():
+    # 💡 【タスク③】ログインしている店舗のクーポンだけを絞り込んで取得
     if request.method == 'GET':
         try:
-            all_coupons = Coupon.query.all()
+            # フロント側から送られてくる店舗コード
+            request_store_code = request.args.get('store_code') or request.headers.get('X-Store-Code')
+
+            if request_store_code:
+                # 店舗からのアクセスの場合は、その店舗が作ったクーポン、または全店共通（None）のものを取得
+                all_coupons = Coupon.query.filter(
+                    (Coupon.store_code == str(request_store_code).strip()) | (Coupon.store_code == None)
+                ).all()
+            else:
+                # 最高管理者の場合は全件取得
+                all_coupons = Coupon.query.all()
+
             coupon_list = []
             for c in all_coupons:
                 desc_text = c.description if c.description else ""
@@ -104,12 +116,14 @@ def handle_admin_coupons():
                     "title": c.title,
                     "description": display_desc,
                     "discount": discount_text,
-                    "required_rank": c.required_rank if c.required_rank else 'BLUE'
+                    "required_rank": c.required_rank if c.required_rank else 'BLUE',
+                    "store_code": c.store_code
                 })
             return jsonify(coupon_list), 200
         except Exception as e:
             return jsonify({"error": f"一覧取得エラー: {str(e)}"}), 500
 
+    # 💡 【タスク②】クーポン作成時に自動で店舗コードを紐付け
     if request.method == 'POST':
         data = request.get_json()
         try:
@@ -117,29 +131,39 @@ def handle_admin_coupons():
             discount_val = data.get('discount', '特典')
             full_description = f"【特典：{discount_val}】\n{raw_description}"
 
+            assigned_store_code = data.get('store_code') or request.headers.get('X-Store-Code')
+            if assigned_store_code:
+                assigned_store_code = str(assigned_store_code).strip()
+
             new_coupon = Coupon(
                 title=data.get('title'),
                 description=full_description,
-                required_rank=data.get('required_rank', 'BLUE')
+                required_rank=data.get('required_rank', 'BLUE'),
+                store_code=assigned_store_code
             )
             db.session.add(new_coupon)
             db.session.commit()
             return jsonify({
                 "message": "クーポンマスタを作成しました",
-                "coupon": {"id": new_coupon.id, "title": new_coupon.title}
+                "coupon": {"id": new_coupon.id, "title": new_coupon.title, "store_code": new_coupon.store_code}
             }), 201
         except Exception as e:
             db.session.rollback()
             return jsonify({"error": f"作成エラー: {str(e)}"}), 500
 
 
-# 管理画面用の「クーポンマスタ個別削除API」
+# 🌟 管理画面用：クーポンマスタ個別削除API
 @coupons_bp.route('/api/admin/coupons/<int:coupon_id>', methods=['DELETE'])
 def delete_admin_coupon(coupon_id):
     coupon = Coupon.query.get(coupon_id)
     if not coupon:
         return jsonify({"error": "指定されたクーポンマスタが見つかりません"}), 404
         
+    # 💡 【タスク⑤】店舗側からの削除を制限
+    request_store_code = request.args.get('store_code') or request.headers.get('X-Store-Code')
+    if request_store_code and coupon.store_code and coupon.store_code != str(request_store_code).strip():
+        return jsonify({"error": "PERMISSION_DENIED", "message": "他店舗が作成したクーポンを削除することはできません"}), 403
+
     try:
         UserCoupon.query.filter_by(coupon_id=coupon_id).delete()
         db.session.delete(coupon)
@@ -253,20 +277,21 @@ def get_admin_analytics():
 
             user_name = user.username if user else f"会員_{ur.user_id}"
             
-            # 💡 【バグ修正完了】user.user.rank の重複タイポを解消！
             user_rank = user.rank if user and hasattr(user, 'rank') else "BLUE"
 
             store_name = "全店舗共通"
             store_id = "1"
             store_code = "001"
             
-            if coupon and hasattr(coupon, 'store') and coupon.store:
-                store_name = coupon.store.name
-                store_id = str(coupon.store.id)
-                store_code = coupon.store.store_code
-            elif hasattr(ur, 'store_id') and ur.store_id:
-                store_id = str(ur.store_id)
-
+            # クーポンの作成店舗情報を取得
+            if coupon and coupon.store_code:
+                store_code = coupon.store_code
+                matched_store = Store.query.filter_by(store_code=store_code).first()
+                if matched_store:
+                    store_name = matched_store.name
+                    store_id = str(matched_store.id)
+            
+            # 💡 【バグ修正】hasattrの文字列判定のタイポを綺麗に直しました！
             parsed_records.append({
                 "id": ur.id,
                 "userId": ur.user_id,

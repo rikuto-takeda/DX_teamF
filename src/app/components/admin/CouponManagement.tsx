@@ -6,24 +6,37 @@ import { toast } from 'sonner';
 
 type Rank = 'BLUE' | 'BRONZE' | 'SILVER' | 'GOLD';
 
-// 💡 バックエンド（SQLite）のCouponテーブルの構造に合わせた型定義
 interface DB_Coupon {
   id: number;
   title: string;
   description: string;
   discount: string;
-  required_rank: Rank; // バックエンド側の命名規則
+  required_rank: Rank;
+  store_code?: string; // 💡 バックエンドから返ってくる店舗コードを受け取る型を追加
 }
 
 export function CouponManagement() {
   const [coupons, setCoupons] = useState<DB_Coupon[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 💡 バックエンドから本物のクーポンマスタ一覧を取得する関数
+  // 💡 【修正の核心】ローカルストレージなどからログイン中の店舗コードを取得する（システムの設定に合わせて適宜調整してください）
+  const currentStoreCode = localStorage.getItem('store_code') || 'test'; 
+
+  // 💡 バックエンドから「自店舗の」クーポンマスタ一覧を取得する関数
   const fetchCoupons = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('http://localhost:5000/api/admin/coupons');
+      
+      // 💡 クエリパラメータに店舗コード（?store_code=xxx）を付与して、バックエンド側で絞り込ませる！
+      // 同時にバックエンドがヘッダー（X-Store-Code）でも受け取れるよう、念のため両方で送ります。
+      const response = await fetch(`http://localhost:5000/api/admin/coupons?store_code=${currentStoreCode}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Store-Code': currentStoreCode // 💡 バックエンドの request.headers.get に連動
+        }
+      });
+
       if (!response.ok) {
         throw new Error('クーポンマスタ一覧の取得に失敗しました');
       }
@@ -37,27 +50,29 @@ export function CouponManagement() {
     }
   };
 
-  // 💡 画面表示時に一発実行
+  // 💡 画面表示時に実行
   useEffect(() => {
     fetchCoupons();
   }, []);
 
-  // 💡 クーポンの削除処理（本番用のDELETE API連動に完全移行！）
+  // 💡 クーポンの削除処理（タスク⑤：自店舗以外の削除をブロックするバックエンドと連携）
   const handleDeleteCoupon = async (couponId: number, title: string) => {
     if (confirm(`クーポン「${title}」をマスタから削除しますか？\n※配布済みのユーザーの所持データからも消去されます。`)) {
       try {
-        // 1. バックエンドの個別削除API（DELETE）を叩く
-        const response = await fetch(`http://localhost:5000/api/admin/coupons/${couponId}`, {
+        // 💡 削除時も「本当にこの店舗が削除権限を持っているか」を判定させるために店舗コードを付与
+        const response = await fetch(`http://localhost:5000/api/admin/coupons/${couponId}?store_code=${currentStoreCode}`, {
           method: 'DELETE',
+          headers: {
+            'X-Store-Code': currentStoreCode
+          }
         });
 
         const resData = await response.json();
 
         if (!response.ok) {
-          throw new Error(resData.error || 'マスタからの削除に失敗しました');
+          throw new Error(resData.message || resData.error || 'マスタからの削除に失敗しました');
         }
 
-        // 2. DBの削除が成功したら、フロントのStateからも除外して即時反映
         toast.success(`クーポン「${title}」をDBから完全削除しました！`);
         setCoupons(coupons.filter(c => c.id !== couponId));
 
@@ -73,7 +88,9 @@ export function CouponManagement() {
       <div className="flex items-center justify-between border-t border-gray-100 pt-6">
         <div>
           <h2 className="text-xl font-bold text-gray-800">登録済みクーポンマスタ一覧</h2>
-          <p className="text-sm text-gray-500">現在データベース（SQLite）に登録されているクーポンの一覧です。</p>
+          <p className="text-sm text-gray-500">
+            店舗コード <span className="font-mono font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">[{currentStoreCode}]</span> として管理しているクーポン一覧です。
+          </p>
         </div>
         <button 
           onClick={fetchCoupons}
@@ -89,12 +106,11 @@ export function CouponManagement() {
         </div>
       ) : coupons.length === 0 ? (
         <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500 text-sm">
-          登録されているクーポンマスタがありません。上のフォームから最初のクーポンを登録してください。
+          この店舗で登録されているクーポンマスタがありません。
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {coupons.map((coupon) => {
-            // 安全対策: APIから返ってきた値が rankConfigs に存在するかチェック
             const rankKey = coupon.required_rank || 'BLUE';
             const rankInfo = rankConfigs[rankKey] || { name: rankKey, color: '#3b82f6' };
 
@@ -103,12 +119,19 @@ export function CouponManagement() {
                 <div className="p-5">
                   <div className="flex justify-between items-start gap-4 mb-2">
                     <h3 className="font-bold text-gray-800 text-base">{coupon.title}</h3>
-                    <span
-                      className="px-2 py-0.5 rounded text-[10px] font-bold text-white whitespace-nowrap"
-                      style={{ backgroundColor: rankInfo.color }}
-                    >
-                      {rankInfo.name}以上
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span
+                        className="px-2 py-0.5 rounded text-[10px] font-bold text-white whitespace-nowrap"
+                        style={{ backgroundColor: rankInfo.color }}
+                      >
+                        {rankInfo.name}以上
+                      </span>
+                      {coupon.store_code && (
+                        <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.2 rounded font-mono">
+                          店コード: {coupon.store_code}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   
                   <p className="text-sm text-gray-600 mb-4 line-clamp-3">

@@ -39,6 +39,9 @@ class Coupon(db.Model):
     discount_info = db.Column(db.String(100), nullable=True) # 特典内容
     required_rank = db.Column(db.String(20), default='BLUE') # 必要ランク
     is_initial_bonus = db.Column(db.Boolean, default=False)  # 初回特典フラグ
+    
+    # 💡 【タスク①で追加】 どの店舗が作ったクーポンかを識別するコード (空の場合は全店共通扱い)
+    store_code = db.Column(db.String(50), nullable=True, default='001')
 
 class UserCoupon(db.Model):
     __tablename__ = 'user_coupons'
@@ -48,7 +51,7 @@ class UserCoupon(db.Model):
     status = db.Column(db.String(20), default='UNUSED')      # UNUSED: 未使用, USED: 使用済
     assigned_at = db.Column(db.DateTime, default=db.func.current_timestamp())
 
-    # リレーション設定（coupons.py 等でデータを取り出しやすくするため）
+    # リレーション設定
     user = db.relationship('User', backref=db.backref('user_coupons', lazy=True))
     coupon = db.relationship('Coupon', backref=db.backref('user_coupons', lazy=True))
 
@@ -64,7 +67,6 @@ class History(db.Model):
 # ------------------------------------------------------------------
 # 【初期データ投入ロジック】本物のパスワードハッシュ対応版
 # ------------------------------------------------------------------
-# models.py の一番下にある init_sample_data を以下に差し替え
 
 def init_sample_data(app):
     if User.query.filter_by(username='demo_user').first():
@@ -89,7 +91,7 @@ def init_sample_data(app):
         role='SUPERADMIN'
     )
 
-    # 3. テスト用対象店舗の作成（ダイシン 001 のみに絞り込み！）
+    # 3. テスト用対象店舗の作成
     daishin = Store(store_code="001", name="ダイシン 仙台あおば店", category="ダイシン")
 
     db.session.add(demo_user)

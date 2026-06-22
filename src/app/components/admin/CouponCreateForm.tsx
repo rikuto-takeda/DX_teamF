@@ -16,6 +16,9 @@ export function CouponCreateForm({ onSuccess }: CouponCreateFormProps) {
   const [discount, setDiscount] = useState(''); // 例: "10% OFF", "ポテト無料"
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 💡 【修正の核心】ローカルストレージなどからログイン中の店舗コードを取得する
+  const currentStoreCode = localStorage.getItem('store_code') || 'test';
+
   // 💡 送信処理（バックエンドAPIへのPOST通信）
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,12 +37,14 @@ export function CouponCreateForm({ onSuccess }: CouponCreateFormProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Store-Code': currentStoreCode // 💡 念のためヘッダー側にも店舗コードを付与
         },
         body: JSON.stringify({
           title,
           description,
-          required_rank: requiredRank, // バックエンドの命名規則（required_rank）に合わせる
-          discount: discount || '特典'
+          required_rank: requiredRank, // バックエンドの命名規則に合わせる
+          discount: discount || '特典',
+          store_code: currentStoreCode // 💡 【超重要】ここでログイン中の店舗コードをBodyに含める！
         }),
       });
 
@@ -79,7 +84,9 @@ export function CouponCreateForm({ onSuccess }: CouponCreateFormProps) {
         </div>
         <div>
           <h2 className="text-xl font-bold text-gray-800">新規クーポンマスタ登録</h2>
-          <p className="text-sm text-gray-500">アプリ内に配信する新しいクーポンの基本情報をデータベースに登録します。</p>
+          <p className="text-sm text-gray-500">
+            店舗コード <span className="font-mono font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">[{currentStoreCode}]</span> の専用クーポンとしてデータベースに登録します。
+          </p>
         </div>
       </div>
 

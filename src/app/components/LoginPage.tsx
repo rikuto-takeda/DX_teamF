@@ -1,3 +1,4 @@
+// LoginPage.tsx
 import { useState } from 'react';
 import { User } from '../App';
 import { Lock, User as UserIcon, Shield, UserPlus } from 'lucide-react';
@@ -40,20 +41,38 @@ export function LoginPage({ onLogin, onSignup, onLoginError }: LoginPageProps) {
       const data = await response.json();
 
       if (!response.ok) {
-        // バックエンドからエラーが返ってきた場合（401や400など）
         throw new Error(data.error || 'ログインに失敗しました');
       }
 
-      // ログイン成功時：Flaskから返ってきた本物のユーザーデータをフロントの状態にセット
+      // ログイン成功時の処理
       if (isAdminMode) {
+        // 💡 【超重要】店舗ログイン成功時、バックエンドから返ってきた本物の店舗コードを保存！
+        // もし data.store.store_code があればそれを使用し、無ければ入力されたIDから抽出して保存
+        let detectedStoreCode = 'test';
+        if (data.store && data.store.store_code) {
+          detectedStoreCode = data.store.store_code;
+        } else if (userId.startsWith('store_')) {
+          detectedStoreCode = userId.replace('store_', '');
+        } else if (/^\d+$/.test(userId)) {
+          detectedStoreCode = userId; // 純粋な数字コードの場合
+        } else {
+          detectedStoreCode = userId; // その他（"test"など入力されたIDそのもの）
+        }
+
+        // 💡 ブラウザのストレージに現在のログイン店舗の識別背番号をセット！
+        localStorage.setItem('store_code', detectedStoreCode.strip ? detectedStoreCode.trim() : detectedStoreCode);
+
         onLogin({
-          id: data.admin.id.toString(),
-          name: data.admin.username,
+          id: (data.admin?.id || data.store?.id || 999).toString(),
+          name: data.admin?.username || data.store?.username || userId,
           rank: 'GOLD', // 管理者は一律GOLD扱い
           points: 0,
           joinDate: new Date().toISOString()
         }, true);
       } else {
+        // 💡 一般ユーザーがログインした場合は、前回の店舗キャッシュが混ざらないように一度綺麗に削除
+        localStorage.removeItem('store_code');
+
         onLogin({
           id: data.user.id.toString(),
           name: data.user.username,
@@ -64,7 +83,6 @@ export function LoginPage({ onLogin, onSignup, onLoginError }: LoginPageProps) {
       }
 
     } catch (err: any) {
-      // エラーが起きたら画面に赤文字で表示
       const msg = err.message || 'サーバーとの通信に失敗しました';
       setError(msg);
       if (onLoginError) {

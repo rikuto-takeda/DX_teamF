@@ -1,6 +1,6 @@
 # stores.py
 from flask import Blueprint, request, jsonify
-from models import db, Store
+from models import db, Store, Coupon, UserCoupon # 💡 整合性チェック用に Coupon, UserCoupon を追加
 from werkzeug.security import generate_password_hash # 💡 パスワードハッシュ化関数をインポート
 
 stores_bp = Blueprint('stores', __name__)
@@ -112,16 +112,41 @@ def handle_admin_stores():
 @stores_bp.route('/api/admin/stores/<int:store_id>', methods=['DELETE'])
 def delete_admin_store(store_id):
     """
-    指定された店舗マスタをSQLiteから永久に削除する本番API (DELETE)
+    【タスク⑨：データ整合性防衛】指定された店舗マスタをSQLiteから永久に削除する本番API (DELETE)
+    店舗が削除された際、関連するクーポンやユーザー所持情報も連動削除し、分析画面などのバグを防止します。
     """
     store = Store.query.get(store_id)
     if not store:
         return jsonify({"error": "指定された店舗マスタが見つかりません"}), 404
 
     try:
+        # 店舗コードを取得（カラム名の揺れを吸収）
+        store_code = getattr(store, 'store_code', getattr(store, 'code', getattr(store, 'shop_code', None)))
+        
+        if store_code:
+            clean_code = str(store_code).strip()
+            
+            # 💡 ① 削除対象店舗が作成したクーポンマスタ（Coupon）を全件特定
+            linked_coupons = Coupon.query.filter_by(store_code=clean_code).all()
+            linked_coupon_ids = [c.id for c in linked_coupons]
+            
+            if linked_coupon_ids:
+                # 💡 ② 浮いたデータ（孤児レコード）化を防ぐため、対象クーポンに紐づくユーザー所持データを一括連動削除（カスケード）
+                UserCoupon.query.filter(UserCoupon.coupon_id.in_(linked_coupon_ids)).delete(synchronize_session=False)
+                
+                # 💡 ③ 店舗作成のクーポンマスタそのものを一括削除
+                Coupon.query.filter(Coupon.id.in_(linked_coupon_ids)).delete(synchronize_session=False)
+
+        # 💡 ④ 親である店舗マスタを物理削除
         db.session.delete(store)
         db.session.commit()
-        return jsonify({"success": True, "message": f"店舗「{store.name}」をDBから完全削除しました"}), 200
+        
+        return jsonify({
+            "success": True, 
+            "message": f"店舗「{store.name}」および関連するすべてのクーポン・配布データを安全に完全削除しました。"
+        }), 200
+        
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"店舗削除エラー: {str(e)}"}), 500
+        print(f"[ERROR] 店舗連動削除エラー: {str(e)}")
+        return jsonify({"error": f"店舗のクリーンアップ削除に失敗しました: {str(e)}"}), 500

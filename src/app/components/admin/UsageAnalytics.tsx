@@ -38,10 +38,22 @@ export function UsageAnalytics() {
     processedRows: 0,
   });
 
+  // 💡 【修正の核心】ローカルストレージからログイン中の店舗コードを取得
+  const currentStoreCode = localStorage.getItem('store_code') || 'test';
+
   useEffect(() => {
     async function fetchAnalytics() {
       try {
-        const response = await fetch('http://localhost:5000/api/admin/analytics');
+        setLoading(true);
+        // 💡 バックエンドの集計に店舗識別コード（?store_code=xxx）を届ける！
+        const response = await fetch(`http://localhost:5000/api/admin/analytics?store_code=${currentStoreCode}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Store-Code': currentStoreCode
+          }
+        });
+        
         if (response.ok) {
           const data = await response.json();
           setUsageRecords(data.usageRecords || []);
@@ -59,7 +71,7 @@ export function UsageAnalytics() {
     fetchAnalytics();
   }, []);
 
-  // 💡 型を文字列に完全統一して集計（すれ違いを100%防止）
+  // 💡 型を文字列に完全統一して集計
   const totalUsages = usageRecords.length;
   const uniqueUsers = new Set(usageRecords.map(r => r.userId?.toString())).size;
   const uniqueCoupons = masterStats.coupons || new Set(usageRecords.map(r => r.couponId?.toString())).size;
@@ -140,6 +152,12 @@ export function UsageAnalytics() {
 
   return (
     <div className="space-y-6">
+      <div className="bg-white p-4 rounded-xl border border-gray-100 flex items-center justify-between">
+        <p className="text-sm text-gray-600">
+          現在表示中のデータソース: <span className="font-mono font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded">店舗コード [{currentStoreCode}]</span>
+        </p>
+      </div>
+
       {loading ? (
         <div className="text-center py-12 text-gray-500">本番DBの利用履歴を解析中...</div>
       ) : (
@@ -148,7 +166,7 @@ export function UsageAnalytics() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white rounded-xl shadow-md p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-gray-600">累計使用回数（消込数）</p>
+                <p className="text-sm text-gray-600">自店累計使用回数</p>
                 <TrendingUp className="w-5 h-5 text-blue-500" />
               </div>
               <p className="text-3xl text-blue-600">{totalUsages}</p>
@@ -157,7 +175,7 @@ export function UsageAnalytics() {
 
             <div className="bg-white rounded-xl shadow-md p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-gray-600">アクティブユーザー数</p>
+                <p className="text-sm text-gray-600">自店アクティブ顧客数</p>
                 <Users className="w-5 h-5 text-green-500" />
               </div>
               <p className="text-3xl text-green-600">{uniqueUsers}</p>
@@ -166,7 +184,7 @@ export function UsageAnalytics() {
 
             <div className="bg-white rounded-xl shadow-md p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-gray-600">登録クーポン総数</p>
+                <p className="text-sm text-gray-600">自店クーポン総数</p>
                 <Gift className="w-5 h-5 text-purple-500" />
               </div>
               <p className="text-3xl text-purple-600">{uniqueCoupons}</p>
@@ -175,11 +193,11 @@ export function UsageAnalytics() {
 
             <div className="bg-white rounded-xl shadow-md p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-gray-600">提携店舗数</p>
+                <p className="text-sm text-gray-600">データ対象範囲</p>
                 <Store className="w-5 h-5 text-orange-500" />
               </div>
-              <p className="text-3xl text-orange-600">{uniqueStores}</p>
-              <p className="text-xs text-gray-500 mt-1">店舗</p>
+              <p className="text-xl font-bold text-orange-600 mt-1">自店舗データ</p>
+              <p className="text-xs text-gray-500 mt-1">他店データは隔離中</p>
             </div>
           </div>
 
@@ -211,7 +229,7 @@ export function UsageAnalytics() {
                   })}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 py-4 text-center">消込データ（USED）がまだありません</p>
+              <p className="text-sm text-gray-500 py-4 text-center">この店舗での消込データ（USED）がまだありません</p>
             )}
           </div>
 
@@ -272,6 +290,7 @@ export function UsageAnalytics() {
                         dataKey="avgRank" 
                         name="平均ランクレベル" 
                         domain={[0.5, 4.5]}
+                        domain={[0.5, 4.5]}
                         ticks={[1, 2, 3, 4]}
                         tickFormatter={(v) => ({ 1: 'BLUE', 2: 'BRONZE', 3: 'SILVER', 4: 'GOLD' }[v] || '')}
                       />
@@ -289,7 +308,7 @@ export function UsageAnalytics() {
                   <p className="font-bold text-gray-700">📈 ピアソン相関係数</p>
                   <p className="text-3xl font-extrabold text-indigo-600">{correlationResult.correlation.toFixed(3)}</p>
                   <p className="text-xs text-gray-600 leading-relaxed">
-                    本番データベース内の全消込レコードから実数値をリアルタイム計算しています。
+                    自店舗データベース内の消込レコードから実数値をリアルタイム計算しています。
                   </p>
                 </div>
               </div>

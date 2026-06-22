@@ -247,23 +247,23 @@ def get_admin_members():
         return jsonify({"error": f"会員一覧の取得に失敗しました: {str(e)}"}), 500
     
 
-# 分析データ取得API
+# coupons.py の一番下にある get_admin_analytics 関数を以下に差し替えてください
+
+# 分析データ取得API（店舗別絞り込み対応版）
 @coupons_bp.route('/api/admin/analytics', methods=['GET'])
 def get_admin_analytics():
     try:
         from models import UserCoupon, Coupon, User, Store
         
-        all_count = UserCoupon.query.count()
-        used_count = UserCoupon.query.filter_by(status='USED').count()
-        
-        all_records = UserCoupon.query.all()
+        # 💡 フロントエンドから送られてくる店舗コード（クエリパラメータやヘッダー）をキャッチ
+        request_store_code = request.args.get('store_code') or request.headers.get('X-Store-Code')
+        if request_store_code:
+            request_store_code = str(request_store_code).strip()
+
+        all_records = UserCoupon.query.filter_by(status='USED').all()
         parsed_records = []
         
         for ur in all_records:
-            status_str = str(ur.status).upper()
-            if status_str != 'USED':
-                continue
-                
             coupon = ur.coupon
             user = ur.user
             coupon_title = coupon.title if coupon else "テスト用クーポン"
@@ -276,14 +276,14 @@ def get_admin_analytics():
                 discount_text = coupon.discount
 
             user_name = user.username if user else f"会員_{ur.user_id}"
-            
             user_rank = user.rank if user and hasattr(user, 'rank') else "BLUE"
 
+            # デフォルト値
             store_name = "全店舗共通"
             store_id = "1"
             store_code = "001"
             
-            # クーポンの作成店舗情報を取得
+            # クーポンの作成店舗情報を取得して紐付け
             if coupon and coupon.store_code:
                 store_code = coupon.store_code
                 matched_store = Store.query.filter_by(store_code=store_code).first()
@@ -291,7 +291,10 @@ def get_admin_analytics():
                     store_name = matched_store.name
                     store_id = str(matched_store.id)
             
-            # 💡 【バグ修正】hasattrの文字列判定のタイポを綺麗に直しました！
+            # 💡 【マルチテナントの壁】店舗からのアクセスの場合は、他店の利用実績をスキップする！
+            if request_store_code and store_code != request_store_code:
+                continue
+
             parsed_records.append({
                 "id": ur.id,
                 "userId": ur.user_id,
@@ -306,14 +309,19 @@ def get_admin_analytics():
                 "usedAt": ur.updated_at.strftime('%Y-%m-%dT%H:%M:%S.000Z') if hasattr(ur, 'updated_at') and ur.updated_at else "2026-06-18T12:00:00.000Z"
             })
             
-        total_coupons = Coupon.query.count()
-        total_stores = Store.query.count() if 'Store' in globals() else 3
+        # 💡 総件数なども、店舗ごとに絞り込んだ件数に合わせる
+        unique_coupons_query = Coupon.query
+        if request_store_code:
+            unique_coupons_query = unique_coupons_query.filter_by(store_code=request_store_code)
+            
+        total_coupons = unique_coupons_query.count()
+        total_stores = Store.query.count()
         
         return jsonify({
             "success": True,
             "usageRecords": parsed_records,
             "uniqueCouponsCount": total_coupons,
-            "uniqueStoresCount": total_stores
+            "uniqueStoresCount": total_stores if not request_store_code else 1 # 自店舗のみなので1
         }), 200
     except Exception as e:
         return jsonify({"error": f"分析データの集計に失敗しました: {str(e)}"}), 500

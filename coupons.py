@@ -39,19 +39,23 @@ def get_dashboard_info(user_id):
 @coupons_bp.route('/api/coupon/use', methods=['POST'])
 def use_coupon():
     """
-    【コアロジック】クーポンの消込（使用）処理API (WBS 9.2.3)
+    【設計書完全準拠】クーポンの消込（使用）処理API (WBS 9.2.3)
+    入力されたコードが正しいか、および対象クーポンが当店で利用可能かを厳格に検証します。
     """
     data = request.get_json()
     user_coupon_id = data.get('user_coupon_id')
-    shop_code = data.get('shop_code')
+    shop_code = data.get('shop_code') # フロント（店頭スタッフ）から入力された3桁のコード
 
     if not user_coupon_id or not shop_code:
         return jsonify({"error": "クーポンIDと店舗コードを入力してください"}), 400
 
-    store = Store.query.filter_by(store_code=str(shop_code)).first()
+    # 1. コード検証：入力されたコードがデータベースに実在するか照会
+    clean_shop_code = str(shop_code).strip()
+    store = Store.query.filter_by(store_code=clean_shop_code).first()
     if not store:
-        return jsonify({"error": "無効な店舗コードです。正しい3桁のコードを入力してください"}), 400
+        return jsonify({"error": "店舗コードが正しくありません。もう一度確認してください。"}), 400
 
+    # ユーザー所持クーポンの存在確認
     user_coupon = UserCoupon.query.get(user_coupon_id)
     if not user_coupon:
         return jsonify({"error": "指定されたクーポンが見つかりません"}), 404
@@ -59,9 +63,22 @@ def use_coupon():
     if str(user_coupon.status).upper() == 'USED':
         return jsonify({"error": "このクーポンは既に使用済みです"}), 400
 
+    # 2. 使用制限確認：そのクーポンマスタが「当店で利用可能か」を検証する
+    coupon = user_coupon.coupon
+    if coupon and coupon.store_code:
+        # クーポンに作成元の限定店コードが紐付いている場合、現在入力された店頭コードと一致するかチェック
+        if coupon.store_code != clean_shop_code:
+            return jsonify({
+                "error": "NOT_AVAILABLE_HERE", 
+                "message": f"このクーポンは当店では利用できません。（発行元専用クーポンです）"
+            }), 400
+
     try:
+        # 3. 使用処理実行：ステータスを利用済みに更新
         user_coupon.status = 'USED'
-        coupon_title = user_coupon.coupon.title if user_coupon.coupon else "対象クーポン"
+        coupon_title = coupon.title if coupon else "対象クーポン"
+        
+        # 使用履歴（ログ）の永続化記録
         history_log = History(
             user_id=user_coupon.user_id,
             action_type="COUPON_USE",
@@ -84,7 +101,7 @@ def use_coupon():
 # 🌟 管理画面用：クーポンマスタ管理API（作成・一覧取得）
 @coupons_bp.route('/api/admin/coupons', methods=['POST', 'GET'])
 def handle_admin_coupons():
-    # 💡 【タスク③】ログインしている店舗のクーポンだけを絞り込んで取得
+    # 【タスク③】ログインしている店舗のクーポンだけを絞り込んで取得
     if request.method == 'GET':
         try:
             # フロント側から送られてくる店舗コード
@@ -123,7 +140,7 @@ def handle_admin_coupons():
         except Exception as e:
             return jsonify({"error": f"一覧取得エラー: {str(e)}"}), 500
 
-    # 💡 【タスク②】クーポン作成時に自動で店舗コードを紐付け
+    # 【タスク②】クーポン作成時に自動で店舗コードを紐付け
     if request.method == 'POST':
         data = request.get_json()
         try:
@@ -159,7 +176,7 @@ def delete_admin_coupon(coupon_id):
     if not coupon:
         return jsonify({"error": "指定されたクーポンマスタが見つかりません"}), 404
         
-    # 💡 【タスク⑤】店舗側からの削除を制限
+    # 【タスク⑤】店舗側からの削除を制限
     request_store_code = request.args.get('store_code') or request.headers.get('X-Store-Code')
     if request_store_code and coupon.store_code and coupon.store_code != str(request_store_code).strip():
         return jsonify({"error": "PERMISSION_DENIED", "message": "他店舗が作成したクーポンを削除することはできません"}), 403
@@ -247,15 +264,13 @@ def get_admin_members():
         return jsonify({"error": f"会員一覧の取得に失敗しました: {str(e)}"}), 500
     
 
-# coupons.py の一番下にある get_admin_analytics 関数を以下に差し替えてください
-
 # 分析データ取得API（店舗別絞り込み対応版）
 @coupons_bp.route('/api/admin/analytics', methods=['GET'])
 def get_admin_analytics():
     try:
         from models import UserCoupon, Coupon, User, Store
         
-        # 💡 フロントエンドから送られてくる店舗コード（クエリパラメータやヘッダー）をキャッチ
+        # フロントエンドから送られてくる店舗コード（クエリパラメータやヘッダー）をキャッチ
         request_store_code = request.args.get('store_code') or request.headers.get('X-Store-Code')
         if request_store_code:
             request_store_code = str(request_store_code).strip()
@@ -291,7 +306,7 @@ def get_admin_analytics():
                     store_name = matched_store.name
                     store_id = str(matched_store.id)
             
-            # 💡 【マルチテナントの壁】店舗からのアクセスの場合は、他店の利用実績をスキップする！
+            # 【マルチテナントの壁】店舗からのアクセスの場合は、他店の利用実績をスキップする！
             if request_store_code and store_code != request_store_code:
                 continue
 
@@ -309,7 +324,7 @@ def get_admin_analytics():
                 "usedAt": ur.updated_at.strftime('%Y-%m-%dT%H:%M:%S.000Z') if hasattr(ur, 'updated_at') and ur.updated_at else "2026-06-18T12:00:00.000Z"
             })
             
-        # 💡 総件数なども、店舗ごとに絞り込んだ件数に合わせる
+        # 総件数なども、店舗ごとに絞り込んだ件数に合わせる
         unique_coupons_query = Coupon.query
         if request_store_code:
             unique_coupons_query = unique_coupons_query.filter_by(store_code=request_store_code)

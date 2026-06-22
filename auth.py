@@ -109,14 +109,14 @@ def admin_login():
     if not data:
         return jsonify({"error": "BAD_REQUEST", "message": "リクエストデータが空です"}), 400
 
-    # 💡 前後の不要なスペースを徹底的にカットする
+    # 前後の不要なスペースを徹底的にカットする
     username = str(data.get('username', '')).strip()
     password = str(data.get('password', '')).strip()
 
     if not username or not password:
         return jsonify({"error": "VALIDATION_FAILED", "message": "ユーザー名とパスワードは必須です"}), 400
 
-    # 💡 【自動仕分けロジック】
+    # 【自動仕分けロジック】
     # IDが 'store_' で始まる、または '001' などの純粋な数字（店舗コード単体）の場合は、店舗ユーザーとして強制処理する
     if username.startswith('store_') or username.isdigit():
         full_store_id = username if username.startswith('store_') else f"store_{username}"
@@ -158,33 +158,48 @@ def store_login_endpoint():
 
 def process_store_login(login_id_str, password_input):
     """
-    store_XXX から店舗コードを割り出し、categoryカラムからパスワードを復元して認証する共通関数
+    store_XXX から店舗コードを割り出し、categoryカラムからハッシュ化されたパスワードを照合するセキュア版関数
     """
     # "store_001" や "001" から、純粋な3桁の店舗コード (001) を抽出
     store_code = login_id_str.replace('store_', '').strip()
+    password_input_clean = password_input.strip()
 
     # DBから該当する店舗を取得
     store = Store.query.filter_by(store_code=store_code).first()
     if not store:
         return jsonify({"error": "AUTH_FAILED", "message": "指定された店舗コードが見つかりません"}), 401
 
-    # categoryカラムから隠し持ったパスワードを引っ張り出す ("カテゴリ名|パスワード" の形式)
-    actual_password = store.store_code  # 初期フォールバック
+    # categoryカラムから隠し持った文字列を引っ張り出す ("カテゴリ名|ハッシュ値" の形式)
+    stored_credential = store.store_code  # 初期フォールバック
     if store.category and '|' in store.category:
         try:
-            _, actual_password = store.category.split('|', 1)
+            _, stored_credential = store.category.split('|', 1)
         except Exception:
-            actual_password = store.store_code
+            stored_credential = store.store_code
     elif store.category == "ダイシン":
         # 初期デモデータ（ダイシン001）用の特別救済措置
-        actual_password = "001"
+        stored_credential = "001"
 
-    # パスワードの合致検証（動的生成されたランダム英数字、またはフォールバック用の店舗コード）
-    if password_input.strip() == actual_password.strip() or password_input.strip() == store.store_code:
-        # 💡 【超重要】フロントエンドがどのプロパティ名でアクセスしてもクラッシュしないよう全部盛りで返却
+    stored_credential = stored_credential.strip()
+
+    # 💡 【タスク⑧】安全な暗号化パスワード照合
+    is_authenticated = False
+
+    # 1. データベースに保存されている値がハッシュ値（pbkdf2等から始まる）である場合
+    if stored_credential.startswith(('pbkdf2:', 'bcrypt:', 'scrypt:')):
+        if check_password_hash(stored_credential, password_input_clean):
+            is_authenticated = True
+    
+    # 2. 既存データ（生のテキスト）やフォールバック時に対する後方互換対応
+    if not is_authenticated:
+        if password_input_clean == stored_credential or password_input_clean == store.store_code:
+            is_authenticated = True
+
+    if is_authenticated:
+        # フロントエンドがどのプロパティ名でアクセスしてもクラッシュしないよう全部盛りで返却
         response_data = {
             "message": f"店舗「{store.name}」としてログインに成功しました",
-            "role": "STORE",  # 👈 フロントの条件分岐の最重要フラグ
+            "role": "STORE",  # フロントの条件分岐の最重要フラグ
             "user": {
                 "id": store.id,
                 "username": f"store_{store.store_code}",

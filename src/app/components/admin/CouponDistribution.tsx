@@ -21,7 +21,6 @@ import { toast } from 'sonner';
 type Rank = 'BLUE' | 'BRONZE' | 'SILVER' | 'GOLD';
 type DistributionStep = 'create' | 'conditions' | 'confirm' | 'complete';
 
-// 💡 バックエンド（SQLite）から取得するクーポンマスタの型
 interface DBCoupon {
   id: number;
   title: string;
@@ -40,15 +39,14 @@ interface DistributionConditions {
 export function CouponDistribution() {
   const [currentStep, setCurrentStep] = useState<DistributionStep>('create');
   
-  // 💡 マスタデータ関連のState
   const [masterCoupons, setMasterCoupons] = useState<DBCoupon[]>([]);
   const [selectedCouponId, setSelectedCouponId] = useState<string>('');
   const [selectedCoupon, setSelectedCoupon] = useState<DBCoupon | null>(null);
   const [isLoadingMasters, setIsLoadingMasters] = useState(true);
 
   const [conditions, setConditions] = useState<DistributionConditions>({
-    startDate: '2026-06-19', // 今日(2026年6月19日)の日付を初期値に
-    endDate: '2026-07-19',
+    startDate: '2026-06-22', // 💡 本日の日付（2026年6月22日）にアップデート
+    endDate: '2026-07-22',
     usageLimit: 1,
     autoExpire: true
   });
@@ -56,11 +54,21 @@ export function CouponDistribution() {
   const [isDistributing, setIsDistributing] = useState(false);
   const [distributedCount, setDistributedCount] = useState(0);
 
-  // 💡 画面起動時に本物のクーポンマスタ一覧をDBから読み込む
+  // 💡 【修正の核心】ローカルストレージからログイン中の店舗コードを取得
+  const currentStoreCode = localStorage.getItem('store_code') || 'test';
+
+  // 💡 画面起動時に本物のクーポンマスタ一覧を「自店舗に絞って」DBから読み込む
   const fetchMasterCoupons = async () => {
     try {
       setIsLoadingMasters(true);
-      const response = await fetch('http://localhost:5000/api/admin/coupons');
+      // 💡 クエリパラメータに店舗コードを乗せて、他社のクーポンをシャットアウト！
+      const response = await fetch(`http://localhost:5000/api/admin/coupons?store_code=${currentStoreCode}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Store-Code': currentStoreCode
+        }
+      });
       if (!response.ok) throw new Error('マスタデータの取得に失敗しました');
       const data = await response.json();
       setMasterCoupons(data);
@@ -76,7 +84,6 @@ export function CouponDistribution() {
     fetchMasterCoupons();
   }, []);
 
-  // 💡 クーポンが選択されたら、そのオブジェクトをStateに保持する
   const handleCouponChange = (id: string) => {
     setSelectedCouponId(id);
     const coupon = masterCoupons.find(c => String(c.id) === id);
@@ -84,7 +91,7 @@ export function CouponDistribution() {
   };
 
   const getTargetUserCount = () => {
-    return 13; // 固定ダミー数（仕様に準拠）
+    return 13; 
   };
 
   const handleCreateStep = () => {
@@ -103,19 +110,17 @@ export function CouponDistribution() {
     setCurrentStep('confirm');
   };
 
-  // 💡 配布実行（既存マスタを対象に、一括配布APIだけを一撃実行！）
   const handleDistribute = async () => {
     if (!selectedCoupon) return;
     
     setIsDistributing(true);
     try {
-      // 💡 重複作成はせず、選んだマスタIDを使って一括配布APIをストレートに実行
       const distributeRes = await fetch('http://localhost:5000/api/admin/coupons/distribute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           coupon_id: selectedCoupon.id,
-          target_rank: selectedCoupon.required_rank // マスタで定義されたランクを対象に配る
+          target_rank: selectedCoupon.required_rank 
         })
       });
 
@@ -143,12 +148,12 @@ export function CouponDistribution() {
     setSelectedCouponId('');
     setSelectedCoupon(null);
     setConditions({
-      startDate: '2026-06-19',
-      endDate: '2026-07-19',
+      startDate: '2026-06-22',
+      endDate: '2026-07-22',
       usageLimit: 1,
       autoExpire: true
     });
-    fetchMasterCoupons(); // 再度マスタを同期
+    fetchMasterCoupons(); 
   };
 
   const steps = [
@@ -163,8 +168,10 @@ export function CouponDistribution() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl mb-1">クーポン配布コントロール</h2>
-        <p className="text-sm text-gray-600">データベースに登録されているマスタを選択し、対象ユーザーへ一括配布します</p>
+        <h2 className="text-xl font-bold text-gray-800">クーポン配布コントロール</h2>
+        <p className="text-sm text-gray-500">
+          店舗コード <span className="font-mono font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">[{currentStoreCode}]</span> が作成したマスタを選択し、対象ユーザーへ一括配布します
+        </p>
       </div>
 
       {/* ステップインジケーター */}
@@ -206,7 +213,6 @@ export function CouponDistribution() {
 
       {/* ステップコンテンツ */}
       <div className="bg-white rounded-xl shadow-md p-8">
-        {/* ステップ1: クーポン選択画面 */}
         {currentStep === 'create' && (
           <div>
             <div className="flex items-center justify-between mb-6">
@@ -216,7 +222,7 @@ export function CouponDistribution() {
                 </div>
                 <div>
                   <h3 className="text-xl">配布対象クーポンの選択</h3>
-                  <p className="text-sm text-gray-600">配布する既存のクーポンマスタをデータベースから選択してください</p>
+                  <p className="text-sm text-gray-600">自店舗が発行した既存のクーポンマスタをデータベースから選択してください</p>
                 </div>
               </div>
               <button 
@@ -235,23 +241,26 @@ export function CouponDistribution() {
                 </label>
                 {isLoadingMasters ? (
                   <div className="text-sm text-gray-400 py-3">マスタデータをロード中...</div>
+                ) : masterCoupons.length === 0 ? (
+                  <div className="text-sm text-amber-600 bg-amber-50 border border-amber-100 rounded-lg p-3">
+                    配布可能な自店舗のクーポンがマスタに登録されていません。「クーポン管理」タブから先に作成してください。
+                  </div>
                 ) : (
                   <select
                     value={selectedCouponId}
                     onChange={(e) => handleCouponChange(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm font-medium text-gray-700"
                   >
                     <option value="">-- 配布するクーポンを選択してください --</option>
                     {masterCoupons.map((c) => (
                       <option key={c.id} value={c.id}>
-                        [#{c.id}] {c.title} ({c.discount}) - 必要ランク: {c.required_rank}
+                        [#{c.id}] {c.title} ({c.discount})
                       </option>
                     ))}
                   </select>
                 )}
               </div>
 
-              {/* 選択したクーポンの詳細プレビュー */}
               {selectedCoupon && (
                 <div className="bg-purple-50 border border-purple-100 rounded-xl p-5 space-y-3 animate-fadeIn">
                   <div className="flex justify-between items-center">
@@ -273,7 +282,7 @@ export function CouponDistribution() {
               <button
                 onClick={handleCreateStep}
                 disabled={!selectedCouponId}
-                className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold"
               >
                 <span>配布条件の設定へ</span>
                 <ArrowRight className="w-5 h-5" />
@@ -335,7 +344,7 @@ export function CouponDistribution() {
                   <select
                     value={conditions.usageLimit}
                     onChange={(e) => setConditions({ ...conditions, usageLimit: parseInt(e.target.value) })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                   >
                     <option value="1">1回のみ</option>
                     <option value="3">3回まで</option>
@@ -370,14 +379,14 @@ export function CouponDistribution() {
             <div className="flex justify-between gap-3 mt-8">
               <button
                 onClick={() => setCurrentStep('create')}
-                className="flex items-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                className="flex items-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-bold"
               >
                 <ArrowLeft className="w-5 h-5" />
                 <span>戻る</span>
               </button>
               <button
                 onClick={handleConditionsStep}
-                className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-bold"
               >
                 <span>確認画面へ</span>
                 <ArrowRight className="w-5 h-5" />
@@ -461,7 +470,7 @@ export function CouponDistribution() {
             <div className="flex justify-between gap-3 mt-8">
               <button
                 onClick={() => setCurrentStep('conditions')}
-                className="flex items-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                className="flex items-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-bold"
                 disabled={isDistributing}
               >
                 <ArrowLeft className="w-5 h-5" />
@@ -470,7 +479,7 @@ export function CouponDistribution() {
               <button
                 onClick={handleDistribute}
                 disabled={isDistributing}
-                className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed text-sm"
               >
                 {isDistributing ? (
                   <>

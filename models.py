@@ -29,7 +29,7 @@ class Store(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     store_code = db.Column(db.String(50), unique=True, nullable=False) # 店舗識別コード (例: "001", "002")
     name = db.Column(db.String(100), nullable=False)
-    category = db.Column(db.String(50))                      # ダイシン、シシャなど
+    category = db.Column(db.String(50))                      # カテゴリ
 
 class Coupon(db.Model):
     __tablename__ = 'coupons'
@@ -40,8 +40,14 @@ class Coupon(db.Model):
     required_rank = db.Column(db.String(20), default='BLUE') # 必要ランク
     is_initial_bonus = db.Column(db.Boolean, default=False)  # 初回特典フラグ
     
-    # 💡 【タスク①で追加】 どの店舗が作ったクーポンかを識別するコード (空の場合は全店共通扱い)
-    store_code = db.Column(db.String(50), nullable=True, default='001')
+    # 💡 default='001' を完全に撤去
+    store_code = db.Column(db.String(50), nullable=True)
+    
+    # 💡 【バグ②用】 1人あたりの使用上限回数
+    max_uses = db.Column(db.Integer, default=1, nullable=False)
+    
+    # 💡 【バグ③用】 クーポン画像の保存URL
+    image_url = db.Column(db.String(255), nullable=True)
 
 class UserCoupon(db.Model):
     __tablename__ = 'user_coupons'
@@ -50,6 +56,9 @@ class UserCoupon(db.Model):
     coupon_id = db.Column(db.Integer, db.ForeignKey('coupons.id'), nullable=False)
     status = db.Column(db.String(20), default='UNUSED')      # UNUSED: 未使用, USED: 使用済
     assigned_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    # 💡 【バグ②用】 現在の使用回数カウンター
+    used_count = db.Column(db.Integer, default=0, nullable=False)
 
     # リレーション設定
     user = db.relationship('User', backref=db.backref('user_coupons', lazy=True))
@@ -85,6 +94,7 @@ def init_sample_data(app):
     )
 
     # 2. デモ管理者の作成
+    # 💡 引数のエラー原因を完全に修正（admin_username に統一）
     admin_user = Admin(
         admin_username='admin_user',
         password_hash=hashed_password,

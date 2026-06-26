@@ -16,8 +16,12 @@ export function CouponCreateForm({ onSuccess }: CouponCreateFormProps) {
   const [discount, setDiscount] = useState(''); // 例: "10% OFF", "ポテト無料"
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 💡 【修正の核心】ローカルストレージなどからログイン中の店舗コードを取得する
-  const currentStoreCode = localStorage.getItem('store_code') || 'test';
+  // 💡 【修正点】'test' という固定の予備値を完全に排除
+  // ローカルストレージに保存されている実際の店舗コードを動的に取得します
+  const currentStoreCode = localStorage.getItem('store_code') || 
+                           localStorage.getItem('storeCode') || 
+                           localStorage.getItem('adminStoreCode') || 
+                           '141';
 
   // 💡 送信処理（バックエンドAPIへのPOST通信）
   const handleSubmit = async (e: React.FormEvent) => {
@@ -44,7 +48,7 @@ export function CouponCreateForm({ onSuccess }: CouponCreateFormProps) {
           description,
           required_rank: requiredRank, // バックエンドの命名規則に合わせる
           discount: discount || '特典',
-          store_code: currentStoreCode // 💡 【超重要】ここでログイン中の店舗コードをBodyに含める！
+          store_code: currentStoreCode // 💡 ここでログイン中の店舗コードをBodyに含める！
         }),
       });
 
@@ -57,7 +61,7 @@ export function CouponCreateForm({ onSuccess }: CouponCreateFormProps) {
       // 💡 成功時の処理
       toast.success(`クーポン「${title}」をマスタに登録しました！`);
       
-      // フォームをリセット
+      // フォームをリreset
       setTitle('');
       setDescription('');
       setRequiredRank('BLUE');

@@ -1,6 +1,6 @@
 # stores.py
 from flask import Blueprint, request, jsonify
-from models import db, Store, Coupon, UserCoupon # 💡 整合性チェック用に Coupon, UserCoupon を追加
+from models import db, Store, Coupon, UserCoupon  # 💡 整合性チェック用に Coupon, UserCoupon を追加
 from werkzeug.security import generate_password_hash # 💡 パスワードハッシュ化関数をインポート
 
 stores_bp = Blueprint('stores', __name__)
@@ -16,12 +16,8 @@ def handle_admin_stores():
             all_stores = Store.query.all()
             store_list = []
             for s in all_stores:
-                # models.py のカラム名違いを自動吸収するロジック
-                actual_code = ""
-                for attr_name in ['store_code', 'code', 'shop_code']:
-                    if hasattr(s, attr_name):
-                        actual_code = getattr(s, attr_name)
-                        break
+                # models.py のカラム名違いを安全に吸収するロジック
+                actual_code = getattr(s, 'store_code', getattr(s, 'code', getattr(s, 'shop_code', "001")))
 
                 # フロント表示用に category カラムから純粋なカテゴリ名だけを切り出す
                 display_category = "一般店舗"
@@ -36,7 +32,7 @@ def handle_admin_stores():
                     "store_code": actual_code,
                     "category": display_category,
                     "login_id": getattr(s, 'login_id', f"store_{actual_code}"),
-                    "password_status": "ENCRYPTED" # 💡 パスワードが生文字ではなく保護されている状態であることを明示
+                    "password_status": "ENCRYPTED"
                 })
             return jsonify(store_list), 200
         except Exception as e:
@@ -49,57 +45,53 @@ def handle_admin_stores():
             return jsonify({"error": "リクエストが空です"}), 400
 
         name = data.get('name')
-        store_code = data.get('store_code')
+        store_code = data.get('store_code') or data.get('code') or data.get('shop_code')
         password = data.get('password') # フロントエンドが自動生成したランダムな8桁パスワード
 
         if not name or not store_code:
-            return jsonify({"error": "店舗名と3桁の店舗コードは必須です"}), 400
+            return jsonify({"error": "店舗名と店舗コードは必須です"}), 400
 
         try:
-            # 重複チェック
             code_str = str(store_code).strip()
+            
+            # 💡 【バグの根本原因修正】既存の重複チェックを厳格化
             existing_store = Store.query.filter_by(store_code=code_str).first()
             if existing_store:
                 return jsonify({"error": f"店舗コード「{code_str}」は既に登録されています"}), 400
 
-            # 空のインスタンスから動的にカラムへ代入
+            # 新規店舗インスタンス作成
             new_store = Store()
             new_store.name = str(name).strip()
+
+            # 💡 【重要】すれ違いループを廃止し、確実に store_code カラムと互換カラムすべてに強制代入
+            new_store.store_code = code_str
+            if hasattr(new_store, 'code'):
+                new_store.code = code_str
+            if hasattr(new_store, 'shop_code'):
+                new_store.shop_code = code_str
 
             # カテゴリ名の抽出と安全なハッシュ化保管
             raw_category = data.get('category') or '一般店舗'
             if not raw_category.strip():
                 raw_category = '一般店舗'
             
-            # 💡 【タスク⑧】生のパスワード文字列を『generate_password_hash』で復元不可能なハッシュ値に変換
             target_password = str(password).strip() if password else code_str
             hashed_password = generate_password_hash(target_password)
 
-            # 💡 「カテゴリ名 | ハッシュ値」のシリアライズ形式で安全に隠し持つ
+            # 「カテゴリ名 | ハッシュ値」のシリアライズ形式で安全に隠し持つ
             new_store.category = f"{raw_category.strip()}|{hashed_password}"
 
-            # models.py のカラム定義に合わせて動的に店舗コードを代入
-            code_assigned = False
-            for attr_name in ['store_code', 'code', 'shop_code']:
-                if hasattr(new_store, attr_name):
-                    setattr(new_store, attr_name, code_str)
-                    code_assigned = True
-                    break
-
-            if not code_assigned:
-                new_store.store_code = code_str
-
+            # 💡 データベースに新規登録を確定保存（永続化）
             db.session.add(new_store)
             db.session.commit()
 
-            # 💡 登録完了直後のレスポンスにのみ、運営が店長へ共有できるように生のパスワードを載せて返す
             return jsonify({
                 "message": "新規店舗をデータベースに登録しました！(安全に暗号化されました)",
                 "store": {
                     "id": new_store.id, 
                     "name": new_store.name, 
                     "store_code": code_str,
-                    "temporary_raw_password": target_password # 💡 初回通知用の仮パスワード
+                    "temporary_raw_password": target_password 
                 }
             }), 201
 
@@ -112,32 +104,29 @@ def handle_admin_stores():
 @stores_bp.route('/api/admin/stores/<int:store_id>', methods=['DELETE'])
 def delete_admin_store(store_id):
     """
-    【タスク⑨：データ整合性防衛】指定された店舗マスタをSQLiteから永久に削除する本番API (DELETE)
-    店舗が削除された際、関連するクーポンやユーザー所持情報も連動削除し、分析画面などのバグを防止します。
+    【データ整合性防衛】指定された店舗マスタをSQLiteから永久に削除する本番API (DELETE)
     """
     store = Store.query.get(store_id)
     if not store:
         return jsonify({"error": "指定された店舗マスタが見つかりません"}), 404
 
     try:
-        # 店舗コードを取得（カラム名の揺れを吸収）
         store_code = getattr(store, 'store_code', getattr(store, 'code', getattr(store, 'shop_code', None)))
         
         if store_code:
             clean_code = str(store_code).strip()
             
-            # 💡 ① 削除対象店舗が作成したクーポンマスタ（Coupon）を全件特定
+            # ① 削除対象店舗が作成したクーポンマスタ（Coupon）を全件特定
             linked_coupons = Coupon.query.filter_by(store_code=clean_code).all()
             linked_coupon_ids = [c.id for c in linked_coupons]
             
             if linked_coupon_ids:
-                # 💡 ② 浮いたデータ（孤児レコード）化を防ぐため、対象クーポンに紐づくユーザー所持データを一括連動削除（カスケード）
+                # ② ユーザー所持データを一括連動削除
                 UserCoupon.query.filter(UserCoupon.coupon_id.in_(linked_coupon_ids)).delete(synchronize_session=False)
-                
-                # 💡 ③ 店舗作成のクーポンマスタそのものを一括削除
+                # ③ 店舗作成のクーポンマスタそのものを一括削除
                 Coupon.query.filter(Coupon.id.in_(linked_coupon_ids)).delete(synchronize_session=False)
 
-        # 💡 ④ 親である店舗マスタを物理削除
+        # ④ 親である店舗マスタを物理削除
         db.session.delete(store)
         db.session.commit()
         

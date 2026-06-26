@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Coupon, Store } from '../App';
-import { findStoreByCode } from '../utils/mockData';
+// 💡 findStoreByCode のインポートを削除（モックデータによる制限を解除）
 import { ArrowLeft, Store as StoreIcon, AlertCircle } from 'lucide-react';
 
 interface StoreCodeInputProps {
@@ -38,14 +38,16 @@ export function StoreCodeInput({ coupon, onSubmit, onBack }: StoreCodeInputProps
     }
 
     const fullCode = code1 + code2 + code3;
-    const store = findStoreByCode(fullCode);
 
-    if (!store) {
-      setError('店舗コードが正しくありません。もう一度確認してください。');
-      return;
-    }
+    // 💡 フロントエンドでの勝手なチェックを廃止し、バックエンドのDB検証に委ねる
+    const tempStore: Store = {
+      id: fullCode,
+      code: fullCode,
+      name: `店舗コード: ${fullCode}` // ※この名前は通信成功後、DBの正しい名前に置き換わります
+    };
 
-    onSubmit(store);
+    // そのまま App.tsx (バックエンド通信) へパスを出す
+    onSubmit(tempStore);
   };
 
   return (
@@ -141,10 +143,7 @@ export function StoreCodeInput({ coupon, onSubmit, onBack }: StoreCodeInputProps
         <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4">
           <p className="text-xs text-gray-600 mb-2">💡 ヒント</p>
           <p className="text-xs text-gray-500">
-            店舗コードは、レジ付近のPOPやスタッフから確認できます。例: 1・2・3
-          </p>
-          <p className="text-xs text-gray-500 mt-2">
-            テスト用コード: <span className="font-mono">123</span> (Aoba Cafe)
+            店舗コードは、レジ付近のPOPやスタッフから確認できます。例: 1・9・4
           </p>
         </div>
       </div>

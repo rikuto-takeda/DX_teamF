@@ -13,9 +13,19 @@ def create_app():
     app = Flask(__name__)
 
     # 1. データベースの設定 (SQLiteを使用)
+    # 💡 パスのズレを完全に防ぐため、カレントディレクトリに依存しない絶対パスを厳格に指定します
     BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(BASE_DIR, "app.db")}'
+    db_path = os.path.join(BASE_DIR, "app.db")
+    
+    # Flaskのインスタンスフォルダによる自動生成のブレを防止
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
+    # 起動時にログとしてFlaskが実際に見ている物理パスを出力させる
+    print(f"=========================================================")
+    print(f"🎯 [DB_PATH] Flaskが接続している本番DBファイルはココです:")
+    print(f"   --> {db_path}")
+    print(f"=========================================================")
 
     # 2. CORSの設定（強化版：すべてのリクエストでCORSを確実に許可）
     CORS(app, resources={r"/*": {"origins": "*"}})
@@ -40,6 +50,7 @@ def create_app():
         
         # ① 初期ユーザーが1人もいない場合だけテストデータを自動生成
         if not User.query.first():
+            print("⚡️ ユーザーテーブルが空のため、初期サンプルデータを投入します...")
             # models.py に用意されている正規のデモデータ作成関数を呼び出す
             init_sample_data(app)
             

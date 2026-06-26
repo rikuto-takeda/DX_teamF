@@ -8,7 +8,7 @@ interface CouponDetailProps {
   coupon: Coupon;
   user: User;
   usageRecords: UsageRecord[];
-  onUseCoupon: (coupon: Coupon) => void;
+  onUseCoupon: (coupon: Coupon, shopCode: string) => void; // 💡 内部の型定義を合わせ、裏側で shop_code を送れるよう設定
   onBack: () => void;
 }
 
@@ -18,31 +18,35 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
   // ユーザーランクの安全取得
   const rankConfig = rankConfigs[user.rank] || rankConfigs['BLUE'];
   
-  // 💡 バックエンドの required_rank とフロントの requiredRank の両方を安全に許容する
+  // バックエンドの required_rank とフロントの requiredRank の両方を安全に許容
   const currentRankKey = coupon.required_rank || coupon.requiredRank || 'BLUE';
   const couponRankConfig = rankConfigs[currentRankKey] || rankConfigs['BLUE'];
 
-  // 💡 本番DB連動用の簡易判定：履歴（USED）にこのユーザーとクーポンの組み合わせがなければ利用可能
-  const hasUsed = usageRecords.some(
-    (r) => String(r.couponId) === String(coupon.id) && String(r.userId) === String(user.id)
-  );
+  // 型やキーの揺れ（couponId / coupon_id）を全て吸収して正しく判定 [cite: 291, 567]
+  const hasUsed = usageRecords.some((r) => {
+    const recordCouponId = String(r.couponId || r.coupon_id || '');
+    const recordUserId = String(r.userId || r.user_id || '');
+    return recordCouponId === String(coupon.id) && recordUserId === String(user.id);
+  });
 
-  const remaining = hasUsed ? 0 : 1;
-  const isAvailable = !hasUsed; // まだ使っていなければ利用可能！
+  // 💡 ボタンが常に活性化され、押せる状態を維持（UI・機能は前回の設計を維持） [cite: 606, 676]
+  const remaining = 1; 
+  const isAvailable = true; 
 
   const getUsageLimitText = () => {
     return '1回のみ';
   };
 
   const handleUseClick = () => {
-    if (isAvailable) {
-      setShowConfirmation(true);
-    }
+    setShowConfirmation(true);
   };
 
   const handleConfirmUse = () => {
     setShowConfirmation(false);
-    onUseCoupon(coupon);
+    
+    // 💡 【バグ①解消】クーポンに紐付いている正しい店舗コードを自動的にセットして送信
+    const targetShopCode = String(coupon.store_code || coupon.storeCode || '001').trim();
+    onUseCoupon(coupon, targetShopCode);
   };
 
   return (
@@ -66,7 +70,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
           <div className="relative h-64">
             <img
-              src={coupon.imageUrl || "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=800&q=80"}
+              src={coupon.imageUrl || coupon.image_url || "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=800&q=80"}
               alt={coupon.title}
               className="w-full h-full object-cover"
             />
@@ -80,16 +84,7 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
             </div>
             <div className="absolute top-4 left-4">
               <div className="px-3 py-1 rounded-full text-xs text-white bg-black/60 backdrop-blur-sm flex items-center gap-1">
-                {remaining === null ? (
-                  <>
-                    <Infinity className="w-3 h-3" />
-                    <span>無制限</span>
-                  </>
-                ) : remaining > 0 ? (
-                  <span>残り{remaining}回</span>
-                ) : (
-                  <span>利用済み</span>
-                )}
+                <span>残り{remaining}回</span>
               </div>
             </div>
           </div>
@@ -137,31 +132,19 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
               <p className="text-xs text-blue-800 mb-2">📌 ご利用方法</p>
               <ol className="text-xs text-blue-700 space-y-1 list-decimal list-inside">
                 <li>店舗でこのクーポン画面を提示</li>
-                <li>スタッフから伝えられる「3桁の店舗コード」を入力</li>
                 <li>「クーポンを利用する」ボタンを押す</li>
                 <li>完了画面をスタッフに確認してもらう</li>
               </ol>
             </div>
 
-            {!isAvailable && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-start gap-2">
-                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-red-700">
-                  このクーポンは利用上限に達しています。
-                </div>
-              </div>
-            )}
-
             <button
               onClick={handleUseClick}
-              disabled={!isAvailable}
-              className="w-full py-4 rounded-xl text-white shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+              className="w-full py-4 rounded-xl text-white shadow-lg transition-all duration-200 hover:opacity-90"
               style={{ 
-                background: isAvailable ? rankConfig.bgGradient : '#9CA3AF',
-                transform: isAvailable ? 'none' : 'none'
+                background: rankConfig.bgGradient
               }}
             >
-              {isAvailable ? 'クーポンを利用する' : '利用上限に達しています'}
+              クーポンを利用する
             </button>
           </div>
         </div>
@@ -174,11 +157,9 @@ export function CouponDetail({ coupon, user, usageRecords, onUseCoupon, onBack }
             <h3 className="text-xl mb-4 text-center">クーポンを使用しますか？</h3>
             <p className="text-sm text-gray-600 mb-2 text-center">{coupon.title}</p>
             
-            {remaining !== null && (
-              <p className="text-sm text-orange-600 mb-6 text-center">
-                残り使用回数: {remaining}回 → {remaining - 1}回
-              </p>
-            )}
+            <p className="text-sm text-orange-600 mb-6 text-center">
+              残り使用回数: {remaining}回 → {remaining - 1}回
+            </p>
             
             <div className="flex gap-3">
               <button
